@@ -39,20 +39,23 @@ uv run python scripts/seed.py
 ### 4) Run API
 
 ```bash
-cd apps/api
 uv run uvicorn main:app --reload --port 8000
+
+# Or from app directory:
+# cd apps/api
+# uv run uvicorn main:app --reload --port 8000
 ```
 
 ### 5) Run Worker + Beat (separate terminals)
 
 ```bash
 cd apps/worker
-uv run celery -A celery_app worker --loglevel=info
+uv run celery -A celery_app worker --loglevel=INFO
 ```
 
 ```bash
 cd apps/worker
-uv run celery -A celery_app beat --loglevel=info
+uv run celery -A celery_app beat --loglevel=INFO
 ```
 
 ### 6) Run Frontend
@@ -246,51 +249,51 @@ console.log('Debug info:', data);
 ### Rebuild Single Service
 
 ```powershell
-docker-compose build api
-docker-compose up -d api
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml build api
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml up -d api
 ```
 
 ### View Logs
 
 ```powershell
 # All services
-docker-compose logs -f
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs -f
 
 # Specific service
-docker-compose logs -f worker
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs -f worker
 
 # Last 100 lines
-docker-compose logs --tail=100 api
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs --tail=100 api
 ```
 
 ### Execute Commands in Container
 
 ```powershell
 # Open shell
-docker-compose exec api bash
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec api bash
 
 # Run Python script
-docker-compose exec api python scripts/seed.py
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec api python scripts/seed.py
 
 # Database shell
-docker-compose exec postgres psql -U worlddash
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec postgres psql -U worlddash
 ```
 
 ### Reset Database
 
 ```powershell
 # Stop services
-docker-compose down
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml down
 
 # Remove volumes
 docker volume rm world-dash_postgres_data
 
 # Restart
-docker-compose up -d
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml up -d
 
 # Re-run migrations and seed
 # See alembic/README.md for migration commands
-docker-compose exec api python scripts/seed.py
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec api python scripts/seed.py
 ```
 
 ## Performance Optimization
@@ -329,15 +332,15 @@ $env:PYTHONPATH = "c:\code\world-dash"
 
 Check PostgreSQL is running:
 ```powershell
-docker-compose ps postgres
-docker-compose logs postgres
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml ps postgres
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs postgres
 ```
 
 ### Redis connection failed
 
 ```powershell
-docker-compose restart redis
-docker-compose exec redis redis-cli ping
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml restart redis
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec redis redis-cli ping
 ```
 
 ### Frontend build errors
@@ -351,10 +354,10 @@ npm run build
 
 ### Celery tasks not executing
 
-1. Check worker is running: `docker-compose ps worker`
+1. Check worker is running: `docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml ps worker`
 2. Check Redis connection
-3. View worker logs: `docker-compose logs worker`
-4. Restart: `docker-compose restart worker beat`
+3. View worker logs: `docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs worker`
+4. Restart: `docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml restart worker beat`
 
 ## Best Practices
 

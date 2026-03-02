@@ -28,6 +28,7 @@ dependencies = [
     "newspaper3k>=0.2.8",
     "beautifulsoup4>=4.12.3",
     "lxml>=5.1.0",
+    "shapely>=2.0.0",
 ]
 
 [project.optional-dependencies]

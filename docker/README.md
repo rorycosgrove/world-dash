@@ -21,7 +21,7 @@ Edit `.env` and set:
 ## Start Services
 
 ```powershell
-docker-compose up -d
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml up -d
 ```
 
 This starts:
@@ -38,7 +38,7 @@ This starts:
 # Run migrations (see alembic/README.md)
 
 # Seed sample RSS sources
-docker-compose exec api python scripts/seed.py
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec api python scripts/seed.py
 ```
 
 ## Access Points
@@ -51,23 +51,23 @@ docker-compose exec api python scripts/seed.py
 
 ```powershell
 # View all logs
-docker-compose logs -f
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs -f
 
 # View API logs
-docker-compose logs -f api
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs -f api
 
 # View worker logs
-docker-compose logs -f worker
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs -f worker
 ```
 
 ## Stop Services
 
 ```powershell
-docker-compose down
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml down
 ```
 
 ## Reset Data (Destructive)
 
 ```powershell
-docker-compose down -v
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml down -v
 ```

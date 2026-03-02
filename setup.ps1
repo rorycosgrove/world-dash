@@ -98,7 +98,7 @@ if (-not (Test-Path ".env")) {
 Write-Info "`n🔨 Step 3/7: Building Docker images..."
 Write-Info "  (This may take 5-10 minutes on first run)"
 
-docker-compose build 2>&1 | ForEach-Object {
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml build 2>&1 | ForEach-Object {
     if ($_ -match "Successfully") {
         Write-Success "  $_"
     }
@@ -114,7 +114,7 @@ if ($LASTEXITCODE -eq 0) {
 # Step 4: Start services
 Write-Info "`n🚀 Step 4/7: Starting services..."
 
-docker-compose up -d
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml up -d
 
 if ($LASTEXITCODE -eq 0) {
     Write-Success "  ✓ Services started"
@@ -137,11 +137,11 @@ while ($attempt -lt $maxAttempts -and -not $allHealthy) {
     
     try {
         # Check PostgreSQL
-        $pgHealth = docker-compose exec -T postgres pg_isready -U worlddash 2>&1
+        $pgHealth = docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec -T postgres pg_isready -U worlddash 2>&1
         $pgHealthy = $pgHealth -match "accepting connections"
         
         # Check Redis
-        $redisHealth = docker-compose exec -T redis redis-cli ping 2>&1
+        $redisHealth = docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec -T redis redis-cli ping 2>&1
         $redisHealthy = $redisHealth -match "PONG"
         
         # Check API
@@ -172,7 +172,7 @@ if (-not $allHealthy) {
 # Step 6: Run database migrations
 Write-Info "`n💾 Step 6/7: Running database migrations..."
 
-docker-compose exec -T api alembic upgrade head
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec -T api alembic upgrade head
 
 if ($LASTEXITCODE -eq 0) {
     Write-Success "  ✓ Database migrations completed"
@@ -185,7 +185,7 @@ if ($LASTEXITCODE -eq 0) {
 # Step 7: Seed database
 Write-Info "`n🌱 Step 7/7: Seeding database with RSS sources..."
 
-docker-compose exec -T api python scripts/seed.py
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec -T api python scripts/seed.py
 
 if ($LASTEXITCODE -eq 0) {
     Write-Success "  ✓ Database seeded with 15 RSS sources"

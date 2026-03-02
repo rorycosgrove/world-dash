@@ -109,11 +109,10 @@ world-dash/
 │       ├── logging.py    # Structured logging
 │       ├── schemas.py    # Pydantic models
 │       └── utils.py      # Helpers
-├── infra/
-│   ├── Dockerfile.api    # API container
-│   ├── Dockerfile.worker # Worker container
-│   ├── Dockerfile.beat   # Scheduler container
-│   └── Dockerfile.web    # Frontend container
+├── Dockerfile.api        # API container
+├── Dockerfile.worker     # Worker container
+├── Dockerfile.beat       # Scheduler container
+├── Dockerfile.web        # Frontend container
 ├── alembic/              # See alembic/README.md
 │   └── versions/
 ├── tests/                # Test suite
@@ -123,7 +122,9 @@ world-dash/
 │   └── test_intelligence.py
 ├── scripts/
 │   └── seed.py           # Database seeding
-├── docker-compose.yml
+├── docker/
+│   ├── docker-compose.local.yml
+│   └── README.md
 ├── pyproject.toml
 └── README.md
 ```
@@ -144,12 +145,15 @@ uv pip install -e .
 uv pip install -e . --group dev
 
 # Run API locally (requires PostgreSQL and Redis running)
-cd apps/api
 uv run uvicorn main:app --reload --port 8000
+
+# Or from app directory:
+# cd apps/api
+# uv run uvicorn main:app --reload --port 8000
 
 # Run worker locally
 cd apps/worker
-uv run celery -A celery_app worker --loglevel=info
+uv run celery -A celery_app worker --loglevel=INFO
 
 # Run tests
 uv run pytest -v --cov=packages
@@ -289,25 +293,25 @@ Docker log and health endpoint usage is documented in `docker/README.md`.
 **Database connection issues:**
 ```powershell
 # Check PostgreSQL is running
-docker-compose ps postgres
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml ps postgres
 
 # View logs
-docker-compose logs postgres
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs postgres
 
 # Connect to database
-docker-compose exec postgres psql -U worlddash -d worlddash
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec postgres psql -U worlddash -d worlddash
 ```
 
 **Worker not processing tasks:**
 ```powershell
 # Check worker status
-docker-compose logs worker
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs worker
 
 # Check Redis connection
-docker-compose exec redis redis-cli ping
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec redis redis-cli ping
 
 # Restart worker
-docker-compose restart worker beat
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml restart worker beat
 ```
 
 **Frontend not loading:**
@@ -316,11 +320,11 @@ docker-compose restart worker beat
 curl http://localhost:8000/health
 
 # Check frontend logs
-docker-compose logs web
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs web
 
 # Rebuild frontend
-docker-compose build web
-docker-compose up -d web
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml build web
+docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml up -d web
 ```
 
 ## 📝 API Examples
