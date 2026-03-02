@@ -1,89 +1,71 @@
 # World Dash - Development Guide
 
-## Setting Up Development Environment
+## Run Locally (Full Stack)
 
-### Backend Development
-
-#### Prerequisites
+### Prerequisites
 - Python 3.12+
+- uv (https://astral.sh/uv)
 - PostgreSQL 16+ with PostGIS
 - Redis 7+
-
-#### Setup
-
-1. **Create virtual environment:**
-```powershell
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-```
-
-2. **Install dependencies:**
-```powershell
-pip install -r requirements.txt
-pip install -r requirements-dev.txt  # Dev dependencies
-```
-
-3. **Configure environment:**
-```powershell
-cp .env.example .env
-# Edit .env with local database credentials
-```
-
-4. **Run migrations:**
-```powershell
-alembic upgrade head
-```
-
-5. **Seed data:**
-```powershell
-python scripts/seed.py
-```
-
-#### Running Services Locally
-
-**API Server:**
-```powershell
-cd apps/api
-python -m uvicorn main:app --reload --port 8000
-```
-
-**Celery Worker:**
-```powershell
-celery -A apps.worker.celery_app worker --loglevel=info --pool=solo
-```
-
-**Celery Beat:**
-```powershell
-celery -A apps.worker.celery_app beat --loglevel=info
-```
-
-### Frontend Development
-
-#### Prerequisites
 - Node.js 20+
 - npm or yarn
 
-#### Setup
+### 1) Configure Environment
 
-1. **Install dependencies:**
-```powershell
+```bash
+cp .env.example .env
+# Edit .env with local database + Redis credentials
+```
+
+### 2) Python Setup
+
+```bash
+uv venv
+source .venv/bin/activate   # macOS/Linux
+# or .\.venv\Scripts\Activate.ps1 on Windows
+
+uv pip install -e .
+uv pip install -e . --group dev
+```
+
+### 3) Migrations + Seed
+
+See `alembic/README.md`, then:
+
+```bash
+uv run python scripts/seed.py
+```
+
+### 4) Run API
+
+```bash
+cd apps/api
+uv run uvicorn main:app --reload --port 8000
+```
+
+### 5) Run Worker + Beat (separate terminals)
+
+```bash
+cd apps/worker
+uv run celery -A celery_app worker --loglevel=info
+```
+
+```bash
+cd apps/worker
+uv run celery -A celery_app beat --loglevel=info
+```
+
+### 6) Run Frontend
+
+```bash
 cd apps/web
 npm install
-```
-
-2. **Configure environment:**
-```powershell
-# Create .env.local
-NEXT_PUBLIC_API_URL=http://localhost:8000
-NEXT_PUBLIC_MAPBOX_TOKEN=your_mapbox_token_here
-```
-
-3. **Run dev server:**
-```powershell
 npm run dev
 ```
 
-Access at: http://localhost:3000
+Access:
+- API: http://localhost:8000
+- Dashboard: http://localhost:3000
 
 ### Testing
 
@@ -91,16 +73,16 @@ Access at: http://localhost:3000
 
 ```powershell
 # Run all tests
-pytest
+uv run pytest
 
 # Run with coverage
-pytest --cov=packages --cov-report=html
+uv run pytest --cov=packages --cov-report=html
 
 # Run specific module
-pytest tests/test_storage.py -v
+uv run pytest tests/test_storage.py -v
 
 # Run with markers
-pytest -m "not slow"
+uv run pytest -m "not slow"
 ```
 
 #### Frontend Tests
@@ -117,18 +99,18 @@ npm run test:e2e  # Playwright E2E tests (TODO)
 
 **Formatting:**
 ```powershell
-black packages/ apps/ tests/
+uv run black packages/ apps/ tests/
 ```
 
 **Linting:**
 ```powershell
-ruff check packages/ apps/ tests/
-ruff check --fix  # Auto-fix issues
+uv run ruff check packages/ apps/ tests/
+uv run ruff check --fix  # Auto-fix issues
 ```
 
 **Type checking:**
 ```powershell
-mypy packages/ apps/
+uv run mypy packages/ apps/
 ```
 
 #### TypeScript
@@ -166,18 +148,7 @@ curl -X POST http://localhost:8000/sources \
 
 ### Creating a Database Migration
 
-```powershell
-# Auto-generate migration from model changes
-alembic revision --autogenerate -m "Add new field to events"
-
-# Edit generated file in alembic/versions/
-
-# Apply migration
-alembic upgrade head
-
-# Rollback if needed
-alembic downgrade -1
-```
+See `alembic/README.md`.
 
 ### Adding a New Alert Rule
 
@@ -244,7 +215,7 @@ custom_task.delay("parameter")
 **Debug API with breakpoints:**
 ```powershell
 # Install debugpy
-pip install debugpy
+uv pip install debugpy
 
 # Add to apps/api/main.py:
 import debugpy
@@ -318,7 +289,7 @@ docker volume rm world-dash_postgres_data
 docker-compose up -d
 
 # Re-run migrations and seed
-docker-compose exec api alembic upgrade head
+# See alembic/README.md for migration commands
 docker-compose exec api python scripts/seed.py
 ```
 

@@ -59,8 +59,7 @@ You should see 6 running services:
 ## Step 4: Initialize Database
 
 ```powershell
-# Run database migrations
-docker-compose exec api alembic upgrade head
+# Run database migrations (see alembic/README.md)
 
 # Seed with 15 RSS feed sources
 docker-compose exec api python scripts/seed.py

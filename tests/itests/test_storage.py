@@ -2,7 +2,6 @@
 Tests for storage repositories.
 """
 
-import pytest
 from uuid import uuid4
 
 from packages.shared.schemas import SourceCreate, EventCreate, EventStatus

@@ -58,10 +58,10 @@ seed:
 
 # Development commands (run without Docker)
 dev-api:
-	cd apps/api && uvicorn main:app --reload
+	cd apps/api && uv run uvicorn main:app --reload
 
 dev-worker:
-	celery -A apps.worker.celery_app worker --loglevel=info
+	uv run celery -A apps.worker.celery_app worker --loglevel=info
 
 dev-web:
 	cd apps/web && npm run dev

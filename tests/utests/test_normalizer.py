@@ -2,7 +2,6 @@
 Tests for event normalizer.
 """
 
-import pytest
 from datetime import datetime
 from uuid import uuid4
 

@@ -59,7 +59,6 @@ World Dash is a modular, production-ready platform that ingests RSS/OSINT feeds,
 **Storage Layer**
 - PostgreSQL with PostGIS for geospatial queries
 - Repository pattern for clean abstraction
-- Alembic migrations
 - Redis for caching and task queue
 
 **Core Modules**
@@ -72,55 +71,7 @@ World Dash is a modular, production-ready platform that ingests RSS/OSINT feeds,
 
 ## 🚀 Quick Start
 
-### Prerequisites
-
-- Docker & Docker Compose
-- Python 3.12+ (for local development)
-- Node.js 20+ (for frontend development)
-- (Optional) Mapbox API token for map visualization
-
-### 1. Clone and Configure
-
-```powershell
-cd c:\code\world-dash
-cp .env.example .env
-```
-
-Edit `.env` and set:
-- Database credentials (change default password!)
-- `NEXT_PUBLIC_MAPBOX_TOKEN` (get free token from mapbox.com)
-
-### 2. Start Services
-
-```powershell
-docker-compose up -d
-```
-
-This starts:
-- PostgreSQL (port 5432)
-- Redis (port 6379)
-- API service (port 8000)
-- Celery worker
-- Celery beat (scheduler)
-- Frontend (port 3000)
-
-### 3. Initialize Database
-
-```powershell
-# Run migrations
-docker-compose exec api alembic upgrade head
-
-# Seed sample RSS sources
-docker-compose exec api python scripts/seed.py
-```
-
-### 4. Access the Dashboard
-
-Open browser to: **http://localhost:3000**
-
-API documentation: **http://localhost:8000/docs**
-
-Health check: **http://localhost:8000/health**
+For Docker-based setup and runtime commands, see `docker/README.md`.
 
 ## 📦 Project Structure
 
@@ -163,7 +114,7 @@ world-dash/
 │   ├── Dockerfile.worker # Worker container
 │   ├── Dockerfile.beat   # Scheduler container
 │   └── Dockerfile.web    # Frontend container
-├── alembic/              # Database migrations
+├── alembic/              # See alembic/README.md
 │   └── versions/
 ├── tests/                # Test suite
 │   ├── conftest.py       # Pytest fixtures
@@ -174,28 +125,34 @@ world-dash/
 │   └── seed.py           # Database seeding
 ├── docker-compose.yml
 ├── pyproject.toml
-├── requirements.txt
 └── README.md
 ```
 
 ## 🔧 Development
 
+For a full local (non-Docker) run guide, see `DEVELOPMENT.md`.
+
 ### Local Python Development
 
 ```powershell
+# Create virtual environment
+uv venv
+.\.venv\Scripts\Activate.ps1
+
 # Install dependencies
-pip install -r requirements.txt
+uv pip install -e .
+uv pip install -e . --group dev
 
 # Run API locally (requires PostgreSQL and Redis running)
 cd apps/api
-python -m uvicorn main:app --reload --port 8000
+uv run uvicorn main:app --reload --port 8000
 
 # Run worker locally
 cd apps/worker
-celery -A celery_app worker --loglevel=info
+uv run celery -A celery_app worker --loglevel=info
 
 # Run tests
-pytest -v --cov=packages
+uv run pytest -v --cov=packages
 ```
 
 ### Local Frontend Development
@@ -208,28 +165,19 @@ npm run dev  # Starts on http://localhost:3000
 
 ### Database Migrations
 
-```powershell
-# Create new migration
-alembic revision --autogenerate -m "description"
-
-# Apply migrations
-alembic upgrade head
-
-# Rollback one migration
-alembic downgrade -1
-```
+See `alembic/README.md`.
 
 ## 🧪 Testing
 
 ```powershell
 # Run all tests
-pytest
+uv run pytest
 
 # Run with coverage
-pytest --cov=packages --cov-report=html
+uv run pytest --cov=packages --cov-report=html
 
 # Run specific test file
-pytest tests/test_storage.py -v
+uv run pytest tests/test_storage.py -v
 ```
 
 ## 📊 Key Features
@@ -327,21 +275,7 @@ pytest tests/test_storage.py -v
 
 ## 🔍 Monitoring
 
-**Health Endpoints**:
-- API health: `http://localhost:8000/health`
-- Metrics: `http://localhost:8000/metrics`
-
-**Logs**:
-```powershell
-# View all logs
-docker-compose logs -f
-
-# View API logs
-docker-compose logs -f api
-
-# View worker logs
-docker-compose logs -f worker
-```
+Docker log and health endpoint usage is documented in `docker/README.md`.
 
 **Key Metrics**:
 - Feed poll success rate
