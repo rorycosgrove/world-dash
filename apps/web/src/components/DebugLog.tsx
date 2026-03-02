@@ -48,11 +48,60 @@ function parseLogArgs(args: any[]): { summary: string; details?: string; source?
     if (first.startsWith('API URL:')) {
       return { summary: `API connected → ${args[1] || first.slice(9)}`, source: 'api-client' };
     }
-    // Event context loading
+
+    // ---------- LLM scanning / analysis progress ----------
+    if (first === 'LLM scan status') {
+      const d = args[1];
+      if (d && typeof d === 'object') {
+        const pct = d.total ? Math.round((d.llmProcessed / d.total) * 100) : 0;
+        const cats = (d.categories || []).join(', ');
+        const status = d.pending === 0
+          ? `✅ All ${d.total} events scanned`
+          : `🤖 ${d.llmProcessed}/${d.total} scanned (${pct}%) — ${d.pending} pending`;
+        return {
+          summary: status,
+          details: cats ? `Active categories: ${cats}` : undefined,
+          source: 'llm-scan',
+        };
+      }
+    }
+    if (first === 'Analysis update') {
+      const d = args[1];
+      if (d && typeof d === 'object') {
+        const cats = (d.topCategories || []).join(', ');
+        const actors = (d.topActors || []).join(', ');
+        const status = d.remaining === 0
+          ? `✅ Analysis complete — ${d.scanned} events processed`
+          : `🧠 Enriched ${d.enriched}/${d.total} | LLM scanned ${d.scanned} | ${d.remaining} remaining`;
+        return {
+          summary: status,
+          details: [cats && `Categories: ${cats}`, actors && `Actors: ${actors}`].filter(Boolean).join('\n') || undefined,
+          source: 'analysis',
+        };
+      }
+    }
+
+    // ---------- Event context ----------
     if (first.startsWith('Fetching context for event')) {
       return { summary: `🔍 Loading context for event`, details: first, source: 'network-map' };
     }
-    if (first === 'Event context loaded:') {
+    if (first.startsWith('Event context built locally')) {
+      const ctx = args[1];
+      if (ctx && typeof ctx === 'object') {
+        const cats = ctx.categories?.join(', ') || 'none';
+        const related = ctx.related_event_ids?.length || 0;
+        return {
+          summary: `⚡ Context ready (local) — ${cats} | ${related} related`,
+          details: JSON.stringify(ctx, null, 2),
+          source: 'llm',
+        };
+      }
+      return { summary: '⚡ Context built from stored LLM data', source: 'llm' };
+    }
+    if (first.startsWith('Fetching context from API')) {
+      return { summary: `🔍 ${first}`, source: 'llm' };
+    }
+    if (first === 'Event context loaded:' || first === 'Event context loaded from API:') {
       const ctx = args[1];
       if (ctx && typeof ctx === 'object') {
         const cats = ctx.categories?.join(', ') || 'none';
@@ -65,7 +114,8 @@ function parseLogArgs(args: any[]): { summary: string; details?: string; source?
       }
       return { summary: '✅ Event context loaded', details: JSON.stringify(args[1]), source: 'llm' };
     }
-    // Fetch failures
+
+    // ---------- Fetch failures ----------
     if (first.startsWith('Failed to fetch') || first.startsWith('Failed to load')) {
       return {
         summary: `❌ ${first}`,

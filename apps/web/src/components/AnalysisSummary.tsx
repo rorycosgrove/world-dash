@@ -78,6 +78,17 @@ export default function AnalysisSummary() {
       const summary = await api.getAnalysisSummary();
       setData(summary);
       setError(false);
+
+      // Emit analysis progress for the debug panel
+      const remaining = summary.total_events - summary.llm_processed;
+      console.debug('Analysis update', {
+        enriched: summary.with_enrichment,
+        scanned: summary.llm_processed,
+        total: summary.total_events,
+        remaining,
+        topCategories: summary.top_categories.slice(0, 3).map((c: { name: string }) => c.name),
+        topActors: summary.top_actors.slice(0, 3).map((a: { name: string }) => a.name),
+      });
     } catch {
       setError(true);
     }
@@ -106,6 +117,9 @@ export default function AnalysisSummary() {
   const pctEnriched = data.total_events > 0
     ? Math.round((data.with_enrichment / data.total_events) * 100)
     : 0;
+  // Drive the progress ring by LLM scan progress — this is the metric that
+  // steadily advances as the background pipeline processes events.
+  const ringPct = pctProcessed;
   const totalSig = data.significance_distribution.reduce((s, d) => s + d.count, 0);
 
   return (
@@ -117,9 +131,9 @@ export default function AnalysisSummary() {
       >
         {/* Progress ring */}
         <div className="relative flex-shrink-0">
-          <ProgressRing percent={pctEnriched} />
+          <ProgressRing percent={ringPct} />
           <div className="absolute inset-0 flex items-center justify-center">
-            <span className="text-xs font-bold text-gray-100">{pctEnriched}%</span>
+            <span className="text-xs font-bold text-gray-100">{ringPct}%</span>
           </div>
         </div>
 
@@ -127,12 +141,16 @@ export default function AnalysisSummary() {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 text-xs">
             <span className="text-gray-400">
-              <span className="text-gray-100 font-semibold">{data.with_enrichment}</span>/{data.total_events} enriched
+              🤖 <span className="text-gray-100 font-semibold">{data.llm_processed}</span>/{data.total_events} scanned
             </span>
-            <span className="text-gray-600">|</span>
-            <span className="text-gray-400">
-              <span className="text-gray-100 font-semibold">{data.llm_processed}</span> scanned
-            </span>
+            {data.with_enrichment > 0 && (
+              <>
+                <span className="text-gray-600">|</span>
+                <span className="text-gray-400">
+                  <span className="text-gray-100 font-semibold">{data.with_enrichment}</span> enriched
+                </span>
+              </>
+            )}
             {data.llm_processed < data.total_events && (
               <>
                 <span className="text-gray-600">|</span>

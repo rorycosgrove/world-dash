@@ -389,11 +389,14 @@ async def get_analysis_summary(
     from packages.storage.models import Event as EventModel
 
     total = session.query(func.count(EventModel.id)).scalar() or 0
-    llm_done = session.query(func.count(EventModel.llm_processed_at)).filter(
+    llm_done = session.query(func.count(EventModel.id)).filter(
         EventModel.llm_processed_at.isnot(None)
     ).scalar() or 0
     with_data = session.execute(text(
-        "SELECT COUNT(*) FROM events WHERE array_length(categories, 1) > 0"
+        "SELECT COUNT(*) FROM events "
+        "WHERE array_length(categories, 1) > 0 "
+        "   OR array_length(actors, 1) > 0 "
+        "   OR array_length(themes, 1) > 0"
     )).scalar() or 0
 
     # Top categories

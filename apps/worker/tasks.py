@@ -29,16 +29,8 @@ _redis_client = _redis.Redis(
 # ---------------------------------------------------------------------------
 
 def _run_async(coro):
-    """Safely run async code from sync Celery tasks."""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, coro).result()
-        return loop.run_until_complete(coro)
-    except RuntimeError:
-        return asyncio.run(coro)
+    """Run async code from sync Celery tasks."""
+    return asyncio.run(coro)
 
 
 def _get_llm_service():
@@ -57,11 +49,24 @@ def _get_llm_service():
     time_limit=180,
 )
 def ingest_all_sources_task():
-    """Celery task: Ingest all enabled sources."""
+    """Celery task: Ingest all enabled sources, each auto-enriching its events."""
     logger.info("task_started", task="ingest_all_sources")
-    result = _run_async(ingest_all_sources())
-    logger.info("task_completed", task="ingest_all_sources", result=result)
-    return result
+
+    # Dispatch per-source Celery tasks so each one chains into
+    # normalization → LLM → analysis automatically.
+    db_manager = get_db_manager()
+    with db_manager.get_session() as session:
+        from packages.storage.repositories import SourceRepository
+        repo = SourceRepository(session)
+        sources = repo.list_enabled()
+
+    dispatched = 0
+    for source in sources:
+        ingest_source_task.delay(str(source.id))
+        dispatched += 1
+
+    logger.info("task_completed", task="ingest_all_sources", dispatched=dispatched)
+    return {"success": True, "dispatched": dispatched}
 
 
 @app.task(
@@ -70,10 +75,23 @@ def ingest_all_sources_task():
     time_limit=90,
 )
 def ingest_source_task(source_id: str):
-    """Celery task: Ingest single source."""
+    """Celery task: Ingest single source, then auto-enrich new events."""
     logger.info("task_started", task="ingest_source", source_id=source_id)
-    result = _run_async(ingest_source(UUID(source_id)))
-    logger.info("task_completed", task="ingest_source", source_id=source_id, result=result)
+    result = ingest_source(UUID(source_id))
+
+    # Immediately chain new events into the enrichment pipeline
+    # (ingestion → normalization → LLM categorization → analysis)
+    new_ids = result.get("new_event_ids", [])
+    for eid in new_ids:
+        normalize_event_task.delay(eid)
+
+    logger.info(
+        "task_completed",
+        task="ingest_source",
+        source_id=source_id,
+        new_events=len(new_ids),
+        auto_enrich=len(new_ids),
+    )
     return result
 
 
@@ -136,7 +154,9 @@ def normalize_event_task(event_id: str):
     max_retries=2,
     soft_time_limit=150,
     time_limit=180,
-    rate_limit="4/m",   # max 4 per minute across the queue
+    # No rate_limit — the llm-worker already runs concurrency=1, which
+    # naturally serialises Ollama requests.  A rate limit on top of that
+    # only adds artificial delay when a burst of new events arrives.
 )
 def llm_categorize_event_task(self, event_id: str):
     """
@@ -199,8 +219,14 @@ def llm_categorize_event_task(self, event_id: str):
 
         except Exception as e:
             logger.error("llm_categorize_failed", event_id=event_id, error=str(e))
-            analyze_event_task.delay(event_id)
-            return {"success": False, "error": str(e)}
+            # Retry on transient errors (connection, timeout); after max
+            # retries, fall through to analysis without LLM data.
+            try:
+                raise self.retry(exc=e, countdown=15 * (self.request.retries + 1))
+            except self.MaxRetriesExceededError:
+                logger.warning("llm_max_retries_exceeded", event_id=event_id)
+                analyze_event_task.delay(event_id)
+                return {"success": False, "error": str(e)}
 
 
 @app.task(
@@ -292,7 +318,7 @@ def analyze_event_task(event_id: str):
     time_limit=60,
 )
 def process_new_events():
-    """Celery task (periodic): Process all raw events through normalization pipeline."""
+    """Celery task (periodic): Safety-net for any RAW events that missed auto-enrichment."""
     logger.info("task_started", task="process_new_events")
 
     db_manager = get_db_manager()
@@ -303,6 +329,11 @@ def process_new_events():
             limit=50,  # cap per cycle to avoid flooding
             status=EventStatus.RAW,
         )
+
+        if not raw_events:
+            logger.info("no_raw_events_found")
+            return {"success": True, "queued": 0}
+
         logger.info("processing_raw_events", count=len(raw_events))
 
         for event in raw_events:

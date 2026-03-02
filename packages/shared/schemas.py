@@ -88,6 +88,7 @@ class EventRead(EventBase):
     """Schema for reading events."""
 
     id: UUID = Field(default_factory=uuid4)
+    content_hash: str = Field(default="", description="Hash for deduplication")
     status: EventStatus = Field(default=EventStatus.RAW)
     severity: Optional[EventSeverity] = None
     location: Optional[LocationSchema] = None
