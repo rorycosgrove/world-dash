@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
+import { useDashboardStore } from '@/store/dashboard';
 
 interface AnalysisData {
   total_events: number;
@@ -72,6 +73,7 @@ export default function AnalysisSummary() {
   const [data, setData] = useState<AnalysisData | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [error, setError] = useState(false);
+  const { autoRefresh, setFilterCategory, setFilterSeverity } = useDashboardStore();
 
   const fetchSummary = useCallback(async () => {
     try {
@@ -96,9 +98,10 @@ export default function AnalysisSummary() {
 
   useEffect(() => {
     fetchSummary();
-    const interval = setInterval(fetchSummary, 15000); // refresh every 15s
+    if (!autoRefresh) return;
+    const interval = setInterval(fetchSummary, 15000);
     return () => clearInterval(interval);
-  }, [fetchSummary]);
+  }, [fetchSummary, autoRefresh]);
 
   if (error || !data) {
     return (
@@ -165,11 +168,12 @@ export default function AnalysisSummary() {
           {totalSig > 0 && (
             <div className="flex gap-0.5 mt-1.5 h-1.5 rounded-full overflow-hidden bg-gray-800">
               {data.significance_distribution.map((d) => (
-                <div
+                <button
                   key={d.level}
-                  className={`${SIG_COLORS[d.level] || 'bg-gray-600'} transition-all duration-500`}
+                  onClick={(e) => { e.stopPropagation(); setFilterSeverity(d.level); }}
+                  className={`${SIG_COLORS[d.level] || 'bg-gray-600'} transition-all duration-500 hover:brightness-125 cursor-pointer`}
                   style={{ width: `${(d.count / totalSig) * 100}%` }}
-                  title={`${d.level}: ${d.count}`}
+                  title={`${d.level}: ${d.count} — click to filter`}
                 />
               ))}
             </div>
@@ -179,12 +183,13 @@ export default function AnalysisSummary() {
           {data.top_categories.length > 0 && (
             <div className="flex gap-1.5 mt-1.5 flex-wrap">
               {data.top_categories.slice(0, 4).map((cat) => (
-                <span
+                <button
                   key={cat.name}
-                  className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-300 border border-red-500/20 capitalize"
+                  onClick={(e) => { e.stopPropagation(); setFilterCategory(cat.name.toLowerCase()); }}
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-300 border border-red-500/20 capitalize hover:bg-red-500/25 transition-colors cursor-pointer"
                 >
                   {cat.name} <span className="text-red-400/60">{cat.count}</span>
-                </span>
+                </button>
               ))}
               {data.top_categories.length > 4 && (
                 <span className="text-[10px] text-gray-500">+{data.top_categories.length - 4}</span>

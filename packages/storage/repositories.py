@@ -148,6 +148,7 @@ class EventRepository:
         status: Optional[EventStatus] = None,
         severity: Optional[EventSeverity] = None,
         since: Optional[datetime] = None,
+        search: Optional[str] = None,
     ) -> List[EventRead]:
         """List recent events with filters."""
         query = self.session.query(Event)
@@ -158,6 +159,11 @@ class EventRepository:
             query = query.filter(Event.severity == severity)
         if since:
             query = query.filter(Event.published_at >= since)
+        if search:
+            term = f"%{search}%"
+            query = query.filter(
+                Event.title.ilike(term) | Event.description.ilike(term)
+            )
 
         events = query.order_by(desc(Event.published_at)).limit(limit).offset(offset).all()
         return [self._to_schema(e) for e in events]

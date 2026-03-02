@@ -47,6 +47,26 @@ class SourceUpdate(BaseModel):
     type: Optional[str] = None
     enabled: Optional[bool] = None
     tags: Optional[List[str]] = None
+    auth_header: Optional[str] = None
+    auth_token: Optional[str] = None
+
+
+class CloudAIConfigResponse(BaseModel):
+    """Response for cloud AI configuration."""
+    provider: str = "openai"
+    api_key: str = ""
+    model: str = "gpt-4o-mini"
+    endpoint: str = ""
+    enabled: bool = False
+
+
+class CloudAIConfigUpdate(BaseModel):
+    """Request to update cloud AI configuration."""
+    provider: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    endpoint: Optional[str] = None
+    enabled: Optional[bool] = None
 
 
 @asynccontextmanager
@@ -328,6 +348,7 @@ async def list_events(
     status: Optional[EventStatus] = Query(default=None),
     severity: Optional[EventSeverity] = Query(default=None),
     since_hours: Optional[int] = Query(default=None, description="Events from last N hours"),
+    search: Optional[str] = Query(default=None, description="Text search in title and description"),
     session: Session = Depends(get_db_session),
 ):
     """List events with filters."""
@@ -345,6 +366,7 @@ async def list_events(
         status=status,
         severity=severity,
         since=since,
+        search=search,
     )
 
     return events
@@ -713,6 +735,76 @@ async def acknowledge_alert(
 
     logger.info("alert_acknowledged", alert_id=str(alert_id))
     return repo.get_by_id(alert_id)
+
+
+# ---- Cloud AI Config (Redis-backed) ----
+
+_CLOUD_AI_REDIS_KEY = "worlddash:cloud_ai_config"
+
+
+def _get_redis():
+    import redis
+    return redis.Redis(
+        host=settings.redis.host,
+        port=settings.redis.port,
+        db=settings.redis.db,
+        decode_responses=True,
+    )
+
+
+@app.get("/cloud-ai/config", response_model=CloudAIConfigResponse)
+async def get_cloud_ai_config():
+    """Get cloud AI provider configuration from Redis."""
+    import json
+
+    try:
+        r = _get_redis()
+        raw = r.get(_CLOUD_AI_REDIS_KEY)
+        if raw:
+            data = json.loads(raw)
+            # Mask the API key for security
+            if data.get("api_key"):
+                data["api_key"] = data["api_key"][:8] + "..." + data["api_key"][-4:] if len(data["api_key"]) > 12 else "••••••••"
+            return CloudAIConfigResponse(**data)
+    except Exception as e:
+        logger.warning("cloud_ai_config_read_failed", error=str(e))
+
+    return CloudAIConfigResponse()
+
+
+@app.put("/cloud-ai/config", response_model=CloudAIConfigResponse)
+async def update_cloud_ai_config(body: CloudAIConfigUpdate):
+    """Update cloud AI provider configuration. Stored in Redis."""
+    import json
+
+    try:
+        r = _get_redis()
+
+        # Load existing config
+        existing = {}
+        raw = r.get(_CLOUD_AI_REDIS_KEY)
+        if raw:
+            existing = json.loads(raw)
+
+        # Merge updates
+        updates = body.model_dump(exclude_unset=True)
+        existing.update(updates)
+
+        r.set(_CLOUD_AI_REDIS_KEY, json.dumps(existing))
+        logger.info("cloud_ai_config_updated", provider=existing.get("provider"))
+
+        # Return with masked key
+        resp = dict(existing)
+        if resp.get("api_key") and len(resp["api_key"]) > 12:
+            resp["api_key"] = resp["api_key"][:8] + "..." + resp["api_key"][-4:]
+        elif resp.get("api_key"):
+            resp["api_key"] = "••••••••"
+
+        return CloudAIConfigResponse(**resp)
+
+    except Exception as e:
+        logger.error("cloud_ai_config_update_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to save config: {str(e)}")
 
 
 if __name__ == "__main__":

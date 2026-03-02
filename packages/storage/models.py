@@ -47,6 +47,10 @@ class Source(Base):
     error_count = Column(Integer, nullable=False, default=0)
     total_events = Column(Integer, nullable=False, default=0)
 
+    # Authentication (optional, for feeds requiring API keys)
+    auth_header = Column(String(200), nullable=True)  # e.g. "Authorization", "X-API-Key"
+    auth_token = Column(Text, nullable=True)           # e.g. "Bearer sk-..."
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(

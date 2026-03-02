@@ -130,6 +130,8 @@ class SourceRead(SourceBase):
     last_error: Optional[str] = None
     error_count: int = Field(default=0)
     total_events: int = Field(default=0)
+    auth_header: Optional[str] = None
+    auth_token: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
