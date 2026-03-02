@@ -22,4 +22,6 @@ COPY apps/api/ ./apps/api/
 # Set Python path
 ENV PYTHONPATH=/app
 
-CMD ["celery", "-A", "apps.worker.celery_app", "worker", "-Q", "default", "--concurrency=4", "--loglevel=info", "-n", "default@%h"]
+# Dedicated LLM worker: concurrency=1, only consumes 'llm' queue.
+# This guarantees Ollama gets exactly one request at a time.
+CMD ["celery", "-A", "apps.worker.celery_app", "worker", "-Q", "llm", "--concurrency=1", "--loglevel=info", "-n", "llm@%h"]

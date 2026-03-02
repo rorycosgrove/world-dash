@@ -67,7 +67,7 @@ services:
       - worlddash
     restart: unless-stopped
 
-  # Celery Worker
+  # Celery Worker (fast tasks: ingest, normalize, analyze)
   worker:
     build:
       context: .
@@ -87,6 +87,36 @@ services:
       OLLAMA_ENDPOINT: ${OLLAMA_ENDPOINT:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama2}
       OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-60}
+      OLLAMA_ENABLED: ${OLLAMA_ENABLED:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - worlddash
+    restart: unless-stopped
+
+  # Celery LLM Worker (slow tasks: Ollama — concurrency=1)
+  llm-worker:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.llm-worker
+    container_name: worlddash-llm-worker
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-worlddash}
+      POSTGRES_USER: ${POSTGRES_USER:-worlddash}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      OLLAMA_ENDPOINT: ${OLLAMA_ENDPOINT:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama2}
+      OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-120}
       OLLAMA_ENABLED: ${OLLAMA_ENABLED:-true}
     depends_on:
       postgres:
@@ -120,6 +150,7 @@ services:
       OLLAMA_ENABLED: ${OLLAMA_ENABLED:-true}
     depends_on:
       - worker
+      - llm-worker
       - redis
     networks:
       - worlddash

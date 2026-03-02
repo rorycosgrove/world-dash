@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
 
+// ---- types ----
 interface Source {
   id: string;
   name: string;
@@ -27,15 +28,22 @@ interface NewSource {
   enabled: boolean;
 }
 
+interface OllamaModel {
+  name: string;
+  size: string | null;
+  modified_at: string | null;
+}
+
 type TabType = 'sources' | 'ollama';
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabType>('sources');
+
+  // ---- sources ----
   const [sources, setSources] = useState<Source[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [editingSource, setEditingSource] = useState<Source | null>(null);
   const [newSource, setNewSource] = useState<NewSource>({
     name: '',
     url: '',
@@ -45,35 +53,49 @@ export default function SettingsPage() {
   });
   const [tagInput, setTagInput] = useState('');
 
-  // Ollama settings
-  const [ollamaEndpoint, setOllamaEndpoint] = useState('http://localhost:11434');
-  const [ollamaModel, setOllamaModel] = useState('llama2');
-  const [ollamaEnabled, setOllamaEnabled] = useState(true);
-  const [testingOllama, setTestingOllama] = useState(false);
-  const [ollamaStatus, setOllamaStatus] = useState<'unknown' | 'connected' | 'failed'>('unknown');
-  const [ollamaMessage, setOllamaMessage] = useState('');
+  // ---- ollama config ----
+  const [cfgEndpoint, setCfgEndpoint] = useState('');
+  const [cfgModel, setCfgModel] = useState('');
+  const [cfgTimeout, setCfgTimeout] = useState(120);
+  const [cfgEnabled, setCfgEnabled] = useState(true);
+  const [availableModels, setAvailableModels] = useState<OllamaModel[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [healthMsg, setHealthMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [testingHealth, setTestingHealth] = useState(false);
 
-  useEffect(() => {
-    // Load Ollama config from API (server-side truth)
-    const loadConfig = async () => {
-      try {
-        const config = await api.getLLMConfig();
-        setOllamaEndpoint(config.endpoint);
-        setOllamaModel(config.model);
-        setOllamaEnabled(config.enabled);
-      } catch {
-        // Fallback to localStorage if API unavailable
-        const saved = localStorage.getItem('ollama-settings');
-        if (saved) {
-          const { endpoint, model } = JSON.parse(saved);
-          setOllamaEndpoint(endpoint || 'http://localhost:11434');
-          setOllamaModel(model || 'llama2');
-        }
-      }
-    };
-    loadConfig();
+  // ---- load ollama config ----
+  const loadLLMConfig = useCallback(async () => {
+    try {
+      const cfg = await api.getLLMConfig();
+      setCfgEndpoint(cfg.endpoint);
+      setCfgModel(cfg.model);
+      setCfgTimeout(cfg.timeout_seconds);
+      setCfgEnabled(cfg.enabled);
+    } catch {
+      console.error('Failed to load LLM config');
+    }
   }, []);
 
+  const loadModels = useCallback(async () => {
+    setLoadingModels(true);
+    try {
+      const data = await api.getLLMModels();
+      setAvailableModels(data.models);
+    } catch {
+      setAvailableModels([]);
+    } finally {
+      setLoadingModels(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLLMConfig();
+    loadModels();
+  }, [loadLLMConfig, loadModels]);
+
+  // ---- sources ----
   const fetchSources = async () => {
     try {
       const data = await api.getSources();
@@ -84,29 +106,17 @@ export default function SettingsPage() {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    fetchSources();
-  }, []);
+  useEffect(() => { fetchSources(); }, []);
 
   const handleAddSource = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       const source = await api.createSource({
         ...newSource,
-        tags: tagInput
-          .split(',')
-          .map((t) => t.trim())
-          .filter(Boolean),
+        tags: tagInput.split(',').map((t) => t.trim()).filter(Boolean),
       });
       setSources([...sources, source]);
-      setNewSource({
-        name: '',
-        url: '',
-        type: 'rss',
-        tags: [],
-        enabled: true,
-      });
+      setNewSource({ name: '', url: '', type: 'rss', tags: [], enabled: true });
       setTagInput('');
       setShowAddForm(false);
     } catch (error) {
@@ -116,9 +126,7 @@ export default function SettingsPage() {
 
   const handleToggleEnabled = async (source: Source) => {
     try {
-      const updated = await api.updateSource(source.id, {
-        enabled: !source.enabled,
-      });
+      const updated = await api.updateSource(source.id, { enabled: !source.enabled });
       setSources(sources.map((s) => (s.id === source.id ? updated : s)));
     } catch (error) {
       console.error('Failed to update source:', error);
@@ -146,56 +154,50 @@ export default function SettingsPage() {
     }
   };
 
-  const testOllamaConnection = async () => {
-    setTestingOllama(true);
-    setOllamaStatus('unknown');
-    setOllamaMessage('Testing connection...');
-
+  // ---- ollama save ----
+  const handleSaveConfig = async () => {
+    setSaving(true);
+    setSaveMsg(null);
     try {
-      console.log(`Testing Ollama at ${ollamaEndpoint} with model ${ollamaModel}`);
-      
-      // First test via the API
-      const health = await api.getLLMHealth();
-      
-      // Then test directly
-      const response = await fetch(`${ollamaEndpoint}/api/tags`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
+      const updated = await api.updateLLMConfig({
+        endpoint: cfgEndpoint,
+        model: cfgModel,
+        timeout_seconds: cfgTimeout,
+        enabled: cfgEnabled,
       });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      const models = data.models || [];
-      const modelExists = models.some((m: any) => m.name.includes(ollamaModel));
-
-      if (modelExists) {
-        setOllamaStatus('connected');
-        setOllamaMessage(`✓ Connected! Found model: ${ollamaModel}`);
-        // Save settings
-        localStorage.setItem(
-          'ollama-settings',
-          JSON.stringify({
-            endpoint: ollamaEndpoint,
-            model: ollamaModel,
-          })
-        );
-      } else {
-        setOllamaStatus('failed');
-        setOllamaMessage(
-          `✗ Connected to Ollama but "${ollamaModel}" not found. Available: ${models.map((m: any) => m.name).join(', ')}`
-        );
-      }
-    } catch (error: any) {
-      setOllamaStatus('failed');
-      setOllamaMessage(`✗ Connection failed: ${error.message}`);
-      console.error('Ollama test failed:', error);
+      setCfgEndpoint(updated.endpoint);
+      setCfgModel(updated.model);
+      setCfgTimeout(updated.timeout_seconds);
+      setCfgEnabled(updated.enabled);
+      setSaveMsg({ ok: true, text: '✓ Configuration saved — workers will use the new settings on their next task.' });
+    } catch (err: any) {
+      setSaveMsg({ ok: false, text: `✗ Failed to save: ${err.message}` });
     } finally {
-      setTestingOllama(false);
+      setSaving(false);
     }
   };
+
+  // ---- ollama health ----
+  const handleTestHealth = async () => {
+    setTestingHealth(true);
+    setHealthMsg(null);
+    try {
+      const health = await api.getLLMHealth();
+      if (health.status === 'healthy') {
+        setHealthMsg({ ok: true, text: health.message });
+      } else {
+        setHealthMsg({ ok: false, text: health.message });
+      }
+      // refresh model list
+      await loadModels();
+    } catch (err: any) {
+      setHealthMsg({ ok: false, text: `✗ API unreachable: ${err.message}` });
+    } finally {
+      setTestingHealth(false);
+    }
+  };
+
+  // ----------------------------------------------------------------
 
   return (
     <div className="min-h-screen bg-gray-900">
@@ -204,38 +206,31 @@ export default function SettingsPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-purple-400">⚙️ Settings</h1>
-            <p className="text-sm text-gray-400">Configure feeds and AI services</p>
+            <p className="text-sm text-gray-400">Configure feeds, AI model, and worker pipeline</p>
           </div>
         </div>
       </header>
 
       {/* Tabs */}
       <div className="flex border-b border-gray-700">
-        <button
-          onClick={() => setActiveTab('sources')}
-          className={`px-6 py-3 font-medium transition-colors ${
-            activeTab === 'sources'
-              ? 'border-b-2 border-purple-500 text-purple-400'
-              : 'text-gray-400 hover:text-gray-300'
-          }`}
-        >
-          📰 Feed Sources
-        </button>
-        <button
-          onClick={() => setActiveTab('ollama')}
-          className={`px-6 py-3 font-medium transition-colors ${
-            activeTab === 'ollama'
-              ? 'border-b-2 border-purple-500 text-purple-400'
-              : 'text-gray-400 hover:text-gray-300'
-          }`}
-        >
-          🤖 Ollama / LLM
-        </button>
+        {(['sources', 'ollama'] as TabType[]).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`px-6 py-3 font-medium transition-colors ${
+              activeTab === tab
+                ? 'border-b-2 border-purple-500 text-purple-400'
+                : 'text-gray-400 hover:text-gray-300'
+            }`}
+          >
+            {tab === 'sources' ? '📰 Feed Sources' : '🤖 AI / LLM'}
+          </button>
+        ))}
       </div>
 
       {/* Content */}
       <div className="max-w-6xl mx-auto p-6">
-        {/* Sources Tab */}
+        {/* ============ SOURCES TAB ============ */}
         {activeTab === 'sources' && (
           <div>
             <div className="flex items-center justify-between mb-6">
@@ -246,7 +241,7 @@ export default function SettingsPage() {
                   disabled={refreshing}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm font-medium disabled:opacity-50"
                 >
-                  {refreshing ? '⏳ Refreshing...' : '🔄 Refresh All'}
+                  {refreshing ? '⏳ Refreshing…' : '🔄 Refresh All'}
                 </button>
                 <button
                   onClick={() => setShowAddForm(!showAddForm)}
@@ -294,7 +289,7 @@ export default function SettingsPage() {
             )}
 
             {loading ? (
-              <div className="text-center py-12 text-gray-400">Loading feeds...</div>
+              <div className="text-center py-12 text-gray-400">Loading feeds…</div>
             ) : sources.length === 0 ? (
               <div className="text-center py-12 text-gray-400">
                 <p className="text-xl mb-2">No feeds configured</p>
@@ -321,6 +316,9 @@ export default function SettingsPage() {
                         </a>
                         <div className="text-xs text-gray-400 mt-1">
                           {source.total_events} events • Last: {source.last_polled_at ? new Date(source.last_polled_at).toLocaleString() : 'never'}
+                          {source.last_error && (
+                            <span className="text-red-400 ml-2">• Error: {source.last_error.slice(0, 60)}</span>
+                          )}
                         </div>
                       </div>
                       <button
@@ -337,88 +335,201 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* Ollama Tab */}
+        {/* ============ OLLAMA / LLM TAB ============ */}
         {activeTab === 'ollama' && (
-          <div className="max-w-2xl">
-            <h2 className="text-xl font-semibold text-gray-100 mb-6">Ollama / LLM Configuration</h2>
+          <div className="max-w-3xl space-y-6">
+            <h2 className="text-xl font-semibold text-gray-100">AI / LLM Configuration</h2>
 
-            <div className="bg-gray-800 rounded p-6 border border-gray-700 space-y-4">
-              {/* Server-side config notice */}
-              <div className="bg-blue-900/30 border border-blue-700 rounded p-3 text-sm text-blue-200">
-                ℹ️ Ollama endpoint and model are configured via environment variables on the server
-                (<code className="bg-gray-800 px-1 rounded">OLLAMA_ENDPOINT</code>,{' '}
-                <code className="bg-gray-800 px-1 rounded">OLLAMA_MODEL</code>). The values below reflect the
-                current server configuration.
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Ollama Endpoint (server)</label>
-                <input
-                  type="url"
-                  value={ollamaEndpoint}
-                  disabled
-                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-400 text-sm cursor-not-allowed"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Model Name (server)</label>
-                <input
-                  type="text"
-                  value={ollamaModel}
-                  disabled
-                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-400 text-sm cursor-not-allowed"
-                />
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-gray-300">LLM Processing:</span>
-                <span className={`text-sm font-bold ${ollamaEnabled ? 'text-green-400' : 'text-red-400'}`}>
-                  {ollamaEnabled ? '✓ Enabled' : '✗ Disabled'}
-                </span>
-              </div>
-
-              <button
-                onClick={testOllamaConnection}
-                disabled={testingOllama}
-                className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded px-4 py-2 font-medium text-white transition-colors"
-              >
-                {testingOllama ? '⏳ Testing Connection...' : '🧪 Test Connection'}
-              </button>
-
-              {ollamaStatus !== 'unknown' && (
-                <div
-                  className={`rounded p-3 text-sm font-medium ${
-                    ollamaStatus === 'connected'
-                      ? 'bg-green-900 text-green-100 border border-green-700'
-                      : 'bg-red-900 text-red-100 border border-red-700'
+            {/* Config card */}
+            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-5">
+              {/* Enable toggle */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="font-medium text-gray-200">LLM Processing</label>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    When enabled, new events are automatically categorised by the AI model.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setCfgEnabled(!cfgEnabled)}
+                  className={`relative w-12 h-6 rounded-full transition-colors ${
+                    cfgEnabled ? 'bg-green-600' : 'bg-gray-600'
                   }`}
                 >
-                  {ollamaMessage}
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                      cfgEnabled ? 'translate-x-6' : ''
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Endpoint */}
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Ollama Endpoint</label>
+                <input
+                  type="url"
+                  value={cfgEndpoint}
+                  onChange={(e) => setCfgEndpoint(e.target.value)}
+                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100 text-sm focus:border-purple-500 focus:outline-none"
+                />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  From Docker containers use <code className="bg-gray-900 px-1 rounded">http://host.docker.internal:11434</code>
+                </p>
+              </div>
+
+              {/* Model selector */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-sm font-medium text-gray-300">Model</label>
+                  <button
+                    onClick={loadModels}
+                    disabled={loadingModels}
+                    className="text-[11px] text-purple-400 hover:text-purple-300 disabled:opacity-50"
+                  >
+                    {loadingModels ? 'Loading…' : '↻ Refresh models'}
+                  </button>
+                </div>
+
+                {availableModels.length > 0 ? (
+                  <div className="space-y-1">
+                    {/* Dropdown */}
+                    <select
+                      value={cfgModel}
+                      onChange={(e) => setCfgModel(e.target.value)}
+                      className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100 text-sm focus:border-purple-500 focus:outline-none"
+                    >
+                      {/* If the current model isn't in the list, still show it */}
+                      {!availableModels.some((m) => m.name === cfgModel) && (
+                        <option value={cfgModel}>{cfgModel} (not found on server)</option>
+                      )}
+                      {availableModels.map((m) => (
+                        <option key={m.name} value={m.name}>
+                          {m.name} {m.size ? `(${m.size})` : ''}
+                        </option>
+                      ))}
+                    </select>
+
+                    {/* Model chips */}
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {availableModels.map((m) => (
+                        <button
+                          key={m.name}
+                          onClick={() => setCfgModel(m.name)}
+                          className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                            cfgModel === m.name
+                              ? 'bg-purple-600 border-purple-400 text-white'
+                              : 'border-gray-600 text-gray-400 hover:border-gray-500 hover:text-gray-300'
+                          }`}
+                        >
+                          {m.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <input
+                      type="text"
+                      value={cfgModel}
+                      onChange={(e) => setCfgModel(e.target.value)}
+                      placeholder="e.g. deepseek-r1:8b"
+                      className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100 text-sm focus:border-purple-500 focus:outline-none"
+                    />
+                    <p className="text-[11px] text-yellow-400/70 mt-1">
+                      No models found. Is Ollama running? Click "Test Connection" below.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Timeout */}
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">
+                  Timeout (seconds)
+                </label>
+                <input
+                  type="number"
+                  min={10}
+                  max={600}
+                  value={cfgTimeout}
+                  onChange={(e) => setCfgTimeout(Number(e.target.value))}
+                  className="w-32 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100 text-sm focus:border-purple-500 focus:outline-none"
+                />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  How long to wait for Ollama to respond before timing out. Larger models need more time.
+                </p>
+              </div>
+
+              {/* Actions row */}
+              <div className="flex items-center gap-3 pt-2 border-t border-gray-700">
+                <button
+                  onClick={handleSaveConfig}
+                  disabled={saving}
+                  className="px-5 py-2 bg-purple-600 hover:bg-purple-700 rounded font-medium text-sm disabled:opacity-50 transition-colors"
+                >
+                  {saving ? '⏳ Saving…' : '💾 Save Configuration'}
+                </button>
+                <button
+                  onClick={handleTestHealth}
+                  disabled={testingHealth}
+                  className="px-5 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded font-medium text-sm disabled:opacity-50 transition-colors"
+                >
+                  {testingHealth ? '⏳ Testing…' : '🧪 Test Connection'}
+                </button>
+              </div>
+
+              {/* Save result */}
+              {saveMsg && (
+                <div className={`rounded p-3 text-sm ${
+                  saveMsg.ok
+                    ? 'bg-green-900/40 text-green-200 border border-green-700'
+                    : 'bg-red-900/40 text-red-200 border border-red-700'
+                }`}>
+                  {saveMsg.text}
                 </div>
               )}
 
-              <div className="bg-gray-900 rounded p-4 border border-gray-700">
-                <h3 className="font-semibold text-gray-100 mb-2">How to Set Up Ollama:</h3>
-                <ol className="text-sm text-gray-300 space-y-1 list-decimal list-inside">
-                  <li>Install Ollama from <a href="https://ollama.ai" target="_blank" rel="noopener noreferrer" className="text-purple-400 hover:underline">ollama.ai</a></li>
-                  <li>Run: <code className="bg-gray-800 px-1 rounded">ollama run llama2</code></li>
-                  <li>Set env vars in <code className="bg-gray-800 px-1 rounded">.env</code>: OLLAMA_ENDPOINT, OLLAMA_MODEL</li>
-                  <li>Restart API/worker containers to pick up changes</li>
-                </ol>
-              </div>
+              {/* Health result */}
+              {healthMsg && (
+                <div className={`rounded p-3 text-sm ${
+                  healthMsg.ok
+                    ? 'bg-green-900/40 text-green-200 border border-green-700'
+                    : 'bg-red-900/40 text-red-200 border border-red-700'
+                }`}>
+                  {healthMsg.text}
+                </div>
+              )}
+            </div>
 
-              <div className="bg-gray-900 rounded p-4 border border-gray-700">
-                <h3 className="font-semibold text-gray-100 mb-2">How It Works:</h3>
-                <ul className="text-sm text-gray-300 space-y-1">
-                  <li>✓ Events are <strong>automatically categorized at ingestion</strong> by the worker</li>
-                  <li>✓ Categories, actors, themes, and significance are stored in the database</li>
-                  <li>✓ Stored data is used as RAG context when you click an event</li>
-                  <li>✓ Related events are found by shared categories and actors</li>
-                  <li>✓ All analysis happens locally via Ollama (no cloud data)</li>
-                  <li>✓ Graceful fallback to tag-based analysis if Ollama is unavailable</li>
-                </ul>
+            {/* Worker pipeline info */}
+            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+              <h3 className="font-semibold text-gray-100 mb-3">Worker Pipeline</h3>
+              <div className="space-y-2 text-sm text-gray-300">
+                <div className="flex items-center gap-3">
+                  <span className="w-2 h-2 rounded-full bg-green-500" />
+                  <span><strong>default</strong> queue — ingestion, normalisation, analysis (concurrency 4)</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="w-2 h-2 rounded-full bg-purple-500" />
+                  <span><strong>llm</strong> queue — AI categorisation (concurrency 1, sequential)</span>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  The LLM worker processes one event at a time so Ollama is never overloaded.
+                  Batches of 5 events are queued every 5 minutes. A Redis lock prevents overlapping batches.
+                </p>
               </div>
+            </div>
+
+            {/* How-to */}
+            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+              <h3 className="font-semibold text-gray-100 mb-3">Quick Start</h3>
+              <ol className="text-sm text-gray-300 space-y-1.5 list-decimal list-inside">
+                <li>Install Ollama from <a href="https://ollama.ai" target="_blank" rel="noopener noreferrer" className="text-purple-400 hover:underline">ollama.ai</a></li>
+                <li>Pull a model: <code className="bg-gray-900 px-1.5 rounded text-xs">ollama pull deepseek-r1:8b</code></li>
+                <li>Select the model above and click <strong>Save Configuration</strong></li>
+                <li>Events will be categorised automatically — no restart needed</li>
+              </ol>
             </div>
           </div>
         )}

@@ -1,17 +1,94 @@
 """
 LLM service for semantic text analysis using Ollama/Llama.
-Reads configuration from shared settings. Provides both async and sync interfaces.
+Configuration is read at call-time from Redis (set via the Settings UI)
+and falls back to environment variables when no override exists.
 """
 
 import json
 from typing import Optional
+
 import httpx
+import redis as _redis
 
 from packages.shared.config import get_settings
 from packages.shared.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Redis keys used to store runtime LLM configuration
+_REDIS_PREFIX = "worlddash:llm_config"
+_KEY_ENDPOINT = f"{_REDIS_PREFIX}:endpoint"
+_KEY_MODEL = f"{_REDIS_PREFIX}:model"
+_KEY_TIMEOUT = f"{_REDIS_PREFIX}:timeout"
+_KEY_ENABLED = f"{_REDIS_PREFIX}:enabled"
+
+
+def _get_redis() -> _redis.Redis:
+    settings = get_settings()
+    return _redis.Redis(
+        host=settings.redis.host,
+        port=settings.redis.port,
+        db=settings.redis.db,
+        decode_responses=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Runtime config helpers (used by API + worker)
+# ---------------------------------------------------------------------------
+
+def get_runtime_llm_config() -> dict:
+    """
+    Return the effective LLM config: Redis overrides > env vars.
+    """
+    settings = get_settings()
+    r = _get_redis()
+
+    endpoint = r.get(_KEY_ENDPOINT) or settings.ollama.endpoint
+    model = r.get(_KEY_MODEL) or settings.ollama.model
+    timeout_raw = r.get(_KEY_TIMEOUT)
+    timeout = int(timeout_raw) if timeout_raw else settings.ollama.timeout_seconds
+    enabled_raw = r.get(_KEY_ENABLED)
+    if enabled_raw is not None:
+        enabled = enabled_raw.lower() in ("true", "1", "yes")
+    else:
+        enabled = settings.ollama.enabled
+
+    return {
+        "endpoint": endpoint,
+        "model": model,
+        "timeout_seconds": timeout,
+        "enabled": enabled,
+    }
+
+
+def set_runtime_llm_config(
+    endpoint: Optional[str] = None,
+    model: Optional[str] = None,
+    timeout_seconds: Optional[int] = None,
+    enabled: Optional[bool] = None,
+) -> dict:
+    """
+    Persist LLM config overrides in Redis.  Workers pick this up on the
+    very next task — no container restart required.
+    """
+    r = _get_redis()
+
+    if endpoint is not None:
+        r.set(_KEY_ENDPOINT, endpoint)
+    if model is not None:
+        r.set(_KEY_MODEL, model)
+    if timeout_seconds is not None:
+        r.set(_KEY_TIMEOUT, str(timeout_seconds))
+    if enabled is not None:
+        r.set(_KEY_ENABLED, str(enabled).lower())
+
+    return get_runtime_llm_config()
+
+
+# ---------------------------------------------------------------------------
+# LLM Service
+# ---------------------------------------------------------------------------
 
 class LlamaService:
     """Service for interacting with local Ollama instance."""
@@ -22,11 +99,12 @@ class LlamaService:
         model: Optional[str] = None,
         timeout: Optional[int] = None,
     ):
-        settings = get_settings()
-        self.endpoint = endpoint or settings.ollama.endpoint
-        self.model = model or settings.ollama.model
-        self.timeout = timeout or settings.ollama.timeout_seconds
-        self.enabled = settings.ollama.enabled
+        # Read runtime config (Redis > env)
+        cfg = get_runtime_llm_config()
+        self.endpoint = endpoint or cfg["endpoint"]
+        self.model = model or cfg["model"]
+        self.timeout = timeout or cfg["timeout_seconds"]
+        self.enabled = cfg["enabled"]
 
     def _build_extraction_prompt(self, text: str) -> str:
         return f"""Analyze this geopolitical intelligence event and extract key semantic information:
@@ -44,8 +122,13 @@ Return only the JSON object, no additional text."""
 
     @staticmethod
     def _parse_json_response(response_text: str) -> Optional[dict]:
-        """Parse JSON from LLM response, handling markdown code blocks."""
+        """Parse JSON from LLM response, handling markdown code blocks and <think> tags."""
         json_text = response_text.strip()
+
+        # Strip <think>...</think> blocks (deepseek-r1 produces these)
+        import re
+        json_text = re.sub(r"<think>.*?</think>", "", json_text, flags=re.DOTALL).strip()
+
         if "```" in json_text:
             parts = json_text.split("```")
             for part in parts[1:]:
@@ -55,6 +138,13 @@ Return only the JSON object, no additional text."""
                 if cleaned.startswith("{"):
                     json_text = cleaned
                     break
+
+        # If there's still extra text around the JSON, extract the first { ... }
+        start = json_text.find("{")
+        end = json_text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            json_text = json_text[start : end + 1]
+
         try:
             return json.loads(json_text)
         except json.JSONDecodeError:
@@ -80,14 +170,13 @@ Return only the JSON object, no additional text."""
             "significance": parsed.get("significance", "medium"),
         }
 
+    # ---- async interface (used by API on-demand analysis) ----
+
     async def extract_event_context(
         self,
         title: str,
         description: Optional[str] = None,
     ) -> dict:
-        """
-        Extract semantic categories and context from event text using Llama (async).
-        """
         if not self.enabled:
             logger.debug("llm_disabled", reason="OLLAMA_ENABLED=false")
             return self._empty_result()
@@ -127,15 +216,13 @@ Return only the JSON object, no additional text."""
             logger.error("llm_extract_error", error=str(e))
             return self._empty_result()
 
+    # ---- sync interface (used by Celery worker) ----
+
     def extract_event_context_sync(
         self,
         title: str,
         description: Optional[str] = None,
     ) -> dict:
-        """
-        Synchronous version of extract_event_context.
-        For use in Celery tasks (avoids asyncio.run issues).
-        """
         if not self.enabled:
             logger.debug("llm_disabled_sync", reason="OLLAMA_ENABLED=false")
             return self._empty_result()
@@ -175,16 +262,14 @@ Return only the JSON object, no additional text."""
             logger.error("llm_extract_error_sync", error=str(e))
             return self._empty_result()
 
+    # ---- related events ----
+
     async def find_related_events(
         self,
         event_title: str,
         event_context: dict,
         other_events: list,
     ) -> list:
-        """
-        Find related events from a list using semantic similarity.
-        Returns list of event IDs that are related to the given event.
-        """
         if not other_events or not self.enabled:
             return []
 
@@ -230,6 +315,8 @@ Return only the JSON, no additional text."""
             logger.error("llm_find_related_error", error=str(e))
             return []
 
+    # ---- health / model listing ----
+
     async def check_health(self) -> dict:
         """Check Ollama connectivity and model availability."""
         try:
@@ -245,7 +332,7 @@ Return only the JSON, no additional text."""
                         "status": "healthy" if model_found else "degraded",
                         "endpoint": self.endpoint,
                         "model": self.model,
-                        "available_models": [m.get("name", "unknown") for m in models[:5]],
+                        "available_models": [m.get("name", "unknown") for m in models],
                         "model_found": model_found,
                         "enabled": self.enabled,
                     }
@@ -265,10 +352,22 @@ Return only the JSON, no additional text."""
                 "enabled": self.enabled,
             }
 
+    async def list_models(self) -> list[str]:
+        """Return names of all models available on the Ollama server."""
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(f"{self.endpoint}/api/tags")
+                if response.status_code == 200:
+                    data = response.json()
+                    return [m.get("name", "unknown") for m in data.get("models", [])]
+        except Exception as e:
+            logger.warning("list_models_failed", error=str(e))
+        return []
+
 
 def get_llama_service(
     endpoint: Optional[str] = None,
     model: Optional[str] = None,
 ) -> LlamaService:
-    """Create a LlamaService instance (reads config by default)."""
+    """Create a LlamaService instance (reads runtime config from Redis)."""
     return LlamaService(endpoint=endpoint, model=model)
