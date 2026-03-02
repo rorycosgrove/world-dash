@@ -57,11 +57,11 @@ else
     exit 1
 fi
 
-if command -v docker-compose &> /dev/null; then
-    COMPOSE_VERSION=$(docker-compose --version)
+if docker compose version &> /dev/null; then
+    COMPOSE_VERSION=$(docker compose version)
     log_success "  ✓ Docker Compose available: $COMPOSE_VERSION"
 else
-    log_error "  ✗ Docker Compose not found. Please install docker-compose"
+    log_error "  ✗ Docker Compose V2 not found. Please install Docker Desktop (includes Compose V2)"
     exit 1
 fi
 
@@ -117,11 +117,14 @@ else
     log_warning "  ⚠ .env already exists, skipping configuration"
 fi
 
+# Compose command with file paths
+COMPOSE="docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml"
+
 # Step 3: Build Docker images
 log_info "\n🔨 Step 3/7: Building Docker images..."
 log_info "  (This may take 5-10 minutes on first run)"
 
-docker-compose build
+$COMPOSE build
 
 if [ $? -eq 0 ]; then
     log_success "  ✓ Docker images built successfully"
@@ -133,7 +136,7 @@ fi
 # Step 4: Start services
 log_info "\n🚀 Step 4/7: Starting services..."
 
-docker-compose up -d
+$COMPOSE up -d
 
 if [ $? -eq 0 ]; then
     log_success "  ✓ Services started"
@@ -155,14 +158,14 @@ while [ $ATTEMPT -lt $MAX_ATTEMPTS ] && [ "$ALL_HEALTHY" = false ]; do
     ATTEMPT=$((ATTEMPT + 1))
     
     # Check PostgreSQL
-    if docker-compose exec -T postgres pg_isready -U worlddash &> /dev/null; then
+    if $COMPOSE exec -T postgres pg_isready -U worlddash &> /dev/null; then
         PG_HEALTHY=true
     else
         PG_HEALTHY=false
     fi
     
     # Check Redis
-    if docker-compose exec -T redis redis-cli ping 2>&1 | grep -q "PONG"; then
+    if $COMPOSE exec -T redis redis-cli ping 2>&1 | grep -q "PONG"; then
         REDIS_HEALTHY=true
     else
         REDIS_HEALTHY=false
@@ -191,20 +194,20 @@ fi
 # Step 6: Run database migrations
 log_info "\n💾 Step 6/7: Running database migrations..."
 
-docker-compose exec -T api alembic upgrade head
+$COMPOSE exec -T api alembic upgrade head
 
 if [ $? -eq 0 ]; then
     log_success "  ✓ Database migrations completed"
 else
     log_error "  ✗ Database migrations failed"
-    log_info "  Check logs: docker-compose logs api"
+    log_info "  Check logs: $COMPOSE logs api"
     exit 1
 fi
 
 # Step 7: Seed database
 log_info "\n🌱 Step 7/7: Seeding database with RSS sources..."
 
-docker-compose exec -T api python scripts/seed.py
+$COMPOSE exec -T api python scripts/seed.py
 
 if [ $? -eq 0 ]; then
     log_success "  ✓ Database seeded with 15 RSS sources"
@@ -218,7 +221,7 @@ echo -e "${GREEN}🎉 Setup Complete! World Dash is running!${NC}"
 echo -e "${GREEN}======================================================================${NC}\n"
 
 log_info "📊 Service Status:"
-docker-compose ps
+$COMPOSE ps
 
 echo -e "\n${CYAN}🌐 Access Points:${NC}"
 echo -e "  Dashboard:  ${GREEN}http://localhost:3000${NC}"
@@ -228,14 +231,14 @@ echo -e "  Health:     ${GREEN}http://localhost:8000/health${NC}"
 echo -e "\n${CYAN}📝 Next Steps:${NC}"
 echo -e "  1. Open dashboard: ${CYAN}http://localhost:3000${NC}"
 echo -e "  2. Wait 5 minutes for first ingestion cycle"
-echo -e "  3. Or trigger manually: ${CYAN}docker-compose exec api python -c 'from apps.worker.tasks import ingest_all_sources_task; ingest_all_sources_task()'${NC}"
+echo -e "  3. Or trigger manually: ${CYAN}$COMPOSE exec api python -c 'from apps.worker.tasks import ingest_all_sources_task; ingest_all_sources_task()'${NC}"
 
 echo -e "\n${CYAN}🔍 Useful Commands:${NC}"
-echo -e "  View logs:        ${CYAN}docker-compose logs -f${NC}"
-echo -e "  View API logs:    ${CYAN}docker-compose logs -f api${NC}"
-echo -e "  View worker logs: ${CYAN}docker-compose logs -f worker${NC}"
-echo -e "  Stop services:    ${CYAN}docker-compose down${NC}"
-echo -e "  Restart:          ${CYAN}docker-compose restart${NC}"
+echo -e "  View logs:        ${CYAN}$COMPOSE logs -f${NC}"
+echo -e "  View API logs:    ${CYAN}$COMPOSE logs -f api${NC}"
+echo -e "  View worker logs: ${CYAN}$COMPOSE logs -f worker${NC}"
+echo -e "  Stop services:    ${CYAN}$COMPOSE down${NC}"
+echo -e "  Restart:          ${CYAN}$COMPOSE restart${NC}"
 
 echo -e "\n${CYAN}📚 Documentation:${NC}"
 echo -e "  README.md, DEVELOPMENT.md, ARCHITECTURE.md"
@@ -244,7 +247,7 @@ if [ -z "$MAPBOX_TOKEN" ] && [ "$SKIP_MAPBOX" = false ]; then
     echo -e "\n${YELLOW}💡 Tip: Add Mapbox token for better maps:${NC}"
     echo -e "  1. Get token: https://mapbox.com/signup"
     echo -e "  2. Add to .env: NEXT_PUBLIC_MAPBOX_TOKEN=pk.your_token"
-    echo -e "  3. Restart: docker-compose restart web"
+    echo -e "  3. Restart: $COMPOSE restart web"
 fi
 
 echo ""

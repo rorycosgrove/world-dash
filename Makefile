@@ -17,7 +17,7 @@ help:
 	@echo "  make migrate   - Run database migrations"
 	@echo "  make seed      - Seed database with sample data"
 
-COMPOSE = docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml
+COMPOSE = docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml
 
 build:
 	$(COMPOSE) build

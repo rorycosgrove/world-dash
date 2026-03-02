@@ -39,12 +39,12 @@ try {
     exit 1
 }
 
-# Check Docker Compose
+# Check Docker Compose (V2 plugin)
 try {
-    $composeVersion = docker-compose --version
+    $composeVersion = docker compose version
     Write-Success "  ✓ Docker Compose available: $composeVersion"
 } catch {
-    Write-Error "  ✗ Docker Compose not found. Please install Docker Desktop or docker-compose"
+    Write-Error "  ✗ Docker Compose not found. Please install Docker Desktop (includes Compose V2)"
     exit 1
 }
 
@@ -98,7 +98,7 @@ if (-not (Test-Path ".env")) {
 Write-Info "`n🔨 Step 3/7: Building Docker images..."
 Write-Info "  (This may take 5-10 minutes on first run)"
 
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml build 2>&1 | ForEach-Object {
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml build 2>&1 | ForEach-Object {
     if ($_ -match "Successfully") {
         Write-Success "  $_"
     }
@@ -114,7 +114,7 @@ if ($LASTEXITCODE -eq 0) {
 # Step 4: Start services
 Write-Info "`n🚀 Step 4/7: Starting services..."
 
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml up -d
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml up -d
 
 if ($LASTEXITCODE -eq 0) {
     Write-Success "  ✓ Services started"
@@ -137,11 +137,11 @@ while ($attempt -lt $maxAttempts -and -not $allHealthy) {
     
     try {
         # Check PostgreSQL
-        $pgHealth = docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec -T postgres pg_isready -U worlddash 2>&1
+        $pgHealth = docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec -T postgres pg_isready -U worlddash 2>&1
         $pgHealthy = $pgHealth -match "accepting connections"
         
         # Check Redis
-        $redisHealth = docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec -T redis redis-cli ping 2>&1
+        $redisHealth = docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec -T redis redis-cli ping 2>&1
         $redisHealthy = $redisHealth -match "PONG"
         
         # Check API
@@ -172,20 +172,20 @@ if (-not $allHealthy) {
 # Step 6: Run database migrations
 Write-Info "`n💾 Step 6/7: Running database migrations..."
 
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec -T api alembic upgrade head
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec -T api alembic upgrade head
 
 if ($LASTEXITCODE -eq 0) {
     Write-Success "  ✓ Database migrations completed"
 } else {
     Write-Error "  ✗ Database migrations failed"
-    Write-Info "  Check logs: docker-compose logs api"
+    Write-Info "  Check logs: docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs api"
     exit 1
 }
 
 # Step 7: Seed database
 Write-Info "`n🌱 Step 7/7: Seeding database with RSS sources..."
 
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec -T api python scripts/seed.py
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec -T api python scripts/seed.py
 
 if ($LASTEXITCODE -eq 0) {
     Write-Success "  ✓ Database seeded with 15 RSS sources"
@@ -199,7 +199,7 @@ Write-Host "🎉 Setup Complete! World Dash is running!" -ForegroundColor Green
 Write-Host ("=" * 70) + "`n" -ForegroundColor Green
 
 Write-Info "📊 Service Status:"
-docker-compose ps
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml ps
 
 Write-Host "`n🌐 Access Points:" -ForegroundColor Cyan
 Write-Host "  Dashboard:  " -NoNewline; Write-Success "http://localhost:3000"
@@ -209,14 +209,14 @@ Write-Host "  Health:     " -NoNewline; Write-Success "http://localhost:8000/hea
 Write-Host "`n📝 Next Steps:" -ForegroundColor Cyan
 Write-Host "  1. Open dashboard: " -NoNewline; Write-Info "http://localhost:3000"
 Write-Host "  2. Wait 5 minutes for first ingestion cycle"
-Write-Host "  3. Or trigger manually: " -NoNewline; Write-Info "docker-compose exec api python -c 'from apps.worker.tasks import ingest_all_sources_task; ingest_all_sources_task()'"
+Write-Host "  3. Or trigger manually: " -NoNewline; Write-Info "docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec api python -c 'from apps.worker.tasks import ingest_all_sources_task; ingest_all_sources_task()'"
 
 Write-Host "`n🔍 Useful Commands:" -ForegroundColor Cyan
-Write-Host "  View logs:        " -NoNewline; Write-Info "docker-compose logs -f"
-Write-Host "  View API logs:    " -NoNewline; Write-Info "docker-compose logs -f api"
-Write-Host "  View worker logs: " -NoNewline; Write-Info "docker-compose logs -f worker"
-Write-Host "  Stop services:    " -NoNewline; Write-Info "docker-compose down"
-Write-Host "  Restart:          " -NoNewline; Write-Info "docker-compose restart"
+Write-Host "  View logs:        " -NoNewline; Write-Info "docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs -f"
+Write-Host "  View API logs:    " -NoNewline; Write-Info "docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs -f api"
+Write-Host "  View worker logs: " -NoNewline; Write-Info "docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs -f worker"
+Write-Host "  Stop services:    " -NoNewline; Write-Info "docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml down"
+Write-Host "  Restart:          " -NoNewline; Write-Info "docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml restart"
 
 Write-Host "`n📚 Documentation:" -ForegroundColor Cyan
 Write-Host "  README.md, DEVELOPMENT.md, ARCHITECTURE.md"
@@ -225,7 +225,7 @@ if (-not $MapboxToken -and -not $SkipMapbox) {
     Write-Host "`n💡 Tip: Add Mapbox token for better maps:" -ForegroundColor Yellow
     Write-Host "  1. Get token: https://mapbox.com/signup"
     Write-Host "  2. Add to .env: NEXT_PUBLIC_MAPBOX_TOKEN=pk.your_token"
-    Write-Host "  3. Restart: docker-compose restart web"
+    Write-Host "  3. Restart: docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml restart web"
 }
 
 Write-Host ""

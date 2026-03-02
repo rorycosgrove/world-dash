@@ -34,6 +34,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Compose command with file paths
+$ComposeCmd = "docker"
+$ComposeBase = @("compose", "-f", "docker/docker-compose.yml", "-f", "docker/docker-compose.local.yml")
+
 Write-Host "`n=== World Dash Service Rebuild ===" -ForegroundColor Cyan
 Write-Host "Timestamp: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n" -ForegroundColor Gray
 
@@ -48,7 +52,7 @@ if ($Services.Count -eq 0) {
 }
 
 # Build command
-$buildArgs = @("docker-compose", "build")
+$buildArgs = $ComposeBase + @("build")
 if ($NoCache) {
     $buildArgs += "--no-cache"
     Write-Host "Using --no-cache flag" -ForegroundColor Gray
@@ -56,8 +60,8 @@ if ($NoCache) {
 $buildArgs += $servicesToRebuild
 
 Write-Host "`n[Step 1/3] Building containers..." -ForegroundColor Cyan
-Write-Host "Command: $($buildArgs -join ' ')" -ForegroundColor Gray
-& $buildArgs[0] $buildArgs[1..($buildArgs.Length - 1)]
+Write-Host "Command: $ComposeCmd $($buildArgs -join ' ')" -ForegroundColor Gray
+& $ComposeCmd @buildArgs
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "`n❌ Build failed with exit code $LASTEXITCODE" -ForegroundColor Red
@@ -68,7 +72,8 @@ Write-Host "`n✅ Build completed successfully" -ForegroundColor Green
 
 # Stop the services
 Write-Host "`n[Step 2/3] Stopping services..." -ForegroundColor Cyan
-docker-compose stop @servicesToRebuild
+$stopArgs = $ComposeBase + @("stop") + $servicesToRebuild
+& $ComposeCmd @stopArgs
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "⚠️  Warning: Stop command returned exit code $LASTEXITCODE" -ForegroundColor Yellow
@@ -76,7 +81,8 @@ if ($LASTEXITCODE -ne 0) {
 
 # Start the services
 Write-Host "`n[Step 3/3] Starting services..." -ForegroundColor Cyan
-docker-compose up -d @servicesToRebuild
+$upArgs = $ComposeBase + @("up", "-d") + $servicesToRebuild
+& $ComposeCmd @upArgs
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "`n❌ Failed to start services with exit code $LASTEXITCODE" -ForegroundColor Red
@@ -91,13 +97,15 @@ Start-Sleep -Seconds 3
 
 # Show status
 Write-Host "`n[Status Check]" -ForegroundColor Cyan
-docker-compose ps
+$psArgs = $ComposeBase + @("ps")
+& $ComposeCmd @psArgs
 
 # Show recent logs
 Write-Host "`n[Recent Logs]" -ForegroundColor Cyan
 foreach ($service in $servicesToRebuild) {
     Write-Host "`n--- $service ---" -ForegroundColor Yellow
-    docker-compose logs --tail=5 $service
+    $logArgs = $ComposeBase + @("logs", "--tail=5", $service)
+    & $ComposeCmd @logArgs
 }
 
 Write-Host "`n=== Rebuild Complete ===" -ForegroundColor Green

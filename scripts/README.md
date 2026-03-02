@@ -71,7 +71,7 @@ This manually triggers feed ingestion without waiting for the scheduled poll.
 ### Seed Database
 
 ```bash
-docker-compose exec api python scripts/seed.py
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec api python scripts/seed.py
 ```
 
 Adds the 15 pre-configured RSS sources to the database.
@@ -94,18 +94,18 @@ chmod +x scripts/*.sh
 
 **Services not healthy:**
 - Check Docker resources (RAM, CPU)
-- View logs: `docker-compose logs`
-- Restart: `docker-compose restart`
+- View logs: `docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs`
+- Restart: `docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml restart`
 
 **Database migration fails:**
 ```bash
 # Check PostgreSQL logs
-docker-compose logs postgres
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs postgres
 
 # Restart and retry
-docker-compose restart postgres
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml restart postgres
 sleep 10
-docker-compose exec api alembic upgrade head
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml exec api alembic upgrade head
 ```
 
 ## Next Steps After Setup
@@ -113,7 +113,7 @@ docker-compose exec api alembic upgrade head
 1. Open dashboard: http://localhost:3000
 2. Wait 5 minutes for first ingestion
 3. Or trigger manually: `./scripts/trigger-ingestion.sh`
-4. View logs: `docker-compose logs -f worker`
+4. View logs: `docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml logs -f worker`
 
 ## Environment Variables
 
@@ -125,13 +125,14 @@ The setup script configures these key variables:
 
 To customize, edit `.env` after setup and restart:
 ```bash
-docker-compose restart
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml restart
 ```
 
 ## Clean Slate
 
 To completely reset:
 ```bash
-docker-compose down -v  # Removes all data!
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml down -v  # Removes all data!
 ./setup.sh              # Re-run setup
 ```
+
