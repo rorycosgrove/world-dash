@@ -64,7 +64,7 @@ class FeedParser:
             follow_redirects=True,
         )
 
-    async def parse(self, source: SourceRead) -> List[FeedEntry]:
+    def parse(self, source: SourceRead) -> List[FeedEntry]:
         """
         Parse feed from source.
 

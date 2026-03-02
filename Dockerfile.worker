@@ -28,4 +28,4 @@ RUN uv pip install --system -e .
 # Set Python path
 ENV PYTHONPATH=/app
 
-CMD ["celery", "-A", "apps.worker.celery_app", "worker", "--loglevel=info"]
+CMD ["celery", "-A", "apps.worker.celery_app", "worker", "-Q", "default", "--concurrency=4", "--loglevel=info", "-n", "default@%h"]

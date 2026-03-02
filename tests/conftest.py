@@ -10,6 +10,43 @@ from packages.storage.models import Base
 from packages.storage.database import DatabaseManager
 
 
+# ---------------------------------------------------------------------------
+# SQLite compatibility shims for PostgreSQL-specific column types
+# ---------------------------------------------------------------------------
+# The production models use ARRAY, JSONB, Geometry (PostGIS), and UUID types
+# that are not natively supported by SQLite.  We register compile-time hooks
+# so that table creation and basic queries work during tests.
+# ---------------------------------------------------------------------------
+
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID as PG_UUID
+from sqlalchemy.ext.compiler import compiles
+from geoalchemy2 import Geometry
+
+
+@compiles(PG_UUID, "sqlite")
+def compile_uuid_sqlite(type_, compiler, **kw):
+    """Store UUIDs as CHAR(36) on SQLite."""
+    return "CHAR(36)"
+
+
+@compiles(ARRAY, "sqlite")
+def compile_array_sqlite(type_, compiler, **kw):
+    """Store ARRAY columns as JSON text on SQLite."""
+    return "TEXT"
+
+
+@compiles(JSONB, "sqlite")
+def compile_jsonb_sqlite(type_, compiler, **kw):
+    """Store JSONB as TEXT on SQLite."""
+    return "TEXT"
+
+
+@compiles(Geometry, "sqlite")
+def compile_geometry_sqlite(type_, compiler, **kw):
+    """Store Geometry as TEXT on SQLite (WKT representation)."""
+    return "TEXT"
+
+
 @pytest.fixture(scope="session")
 def test_db_engine():
     """Create test database engine."""

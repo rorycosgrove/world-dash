@@ -302,6 +302,7 @@ class EventRepository:
             description=event.description,
             url=event.url,
             published_at=event.published_at,
+            content_hash=event.content_hash,
             status=event.status,
             severity=event.severity,
             location=location,

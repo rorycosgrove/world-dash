@@ -37,6 +37,16 @@ export default function EventFeed() {
         });
         setEvents(data);
         setError(null);
+
+        // Emit LLM scan stats for the debug panel
+        const llmDone = data.filter((e: Event) => e.llm_processed_at).length;
+        const pending = data.length - llmDone;
+        console.debug('LLM scan status', {
+          total: data.length,
+          llmProcessed: llmDone,
+          pending,
+          categories: [...new Set(data.flatMap((e: Event) => e.categories || []))].slice(0, 6),
+        });
       } catch (err: any) {
         console.error('Failed to fetch events:', err);
         setError('Failed to load events');

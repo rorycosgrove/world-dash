@@ -38,7 +38,7 @@ Write-Host "`n=== World Dash Service Rebuild ===" -ForegroundColor Cyan
 Write-Host "Timestamp: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n" -ForegroundColor Gray
 
 # Determine which services to rebuild
-$allServices = @("api", "web", "worker", "beat")
+$allServices = @("api", "web", "worker", "llm-worker", "beat")
 if ($Services.Count -eq 0) {
     $servicesToRebuild = $allServices
     Write-Host "Rebuilding ALL services..." -ForegroundColor Yellow

@@ -13,7 +13,7 @@ from .parser import FeedParser
 logger = get_logger(__name__)
 
 
-async def ingest_source(source_id: UUID) -> dict:
+def ingest_source(source_id: UUID) -> dict:
     """
     Ingest events from a single source.
 
@@ -43,7 +43,7 @@ async def ingest_source(source_id: UUID) -> dict:
 
             # Parse feed
             try:
-                entries = await parser.parse(source)
+                entries = parser.parse(source)
             except Exception as e:
                 error_msg = str(e)
                 logger.error("source_parse_failed", source_id=str(source_id), error=error_msg)
@@ -53,6 +53,7 @@ async def ingest_source(source_id: UUID) -> dict:
 
             # Process entries
             new_events = 0
+            new_event_ids = []
             duplicates = 0
 
             for entry in entries:
@@ -71,8 +72,9 @@ async def ingest_source(source_id: UUID) -> dict:
                         continue
 
                     # Create event
-                    event_repo.create(event_create)
+                    created = event_repo.create(event_create)
                     new_events += 1
+                    new_event_ids.append(str(created.id))
 
                 except Exception as e:
                     logger.error(
@@ -103,6 +105,7 @@ async def ingest_source(source_id: UUID) -> dict:
             return {
                 "success": True,
                 "new_events": new_events,
+                "new_event_ids": new_event_ids,
                 "duplicates": duplicates,
                 "total_entries": len(entries),
             }
@@ -114,7 +117,7 @@ async def ingest_source(source_id: UUID) -> dict:
         parser.close()
 
 
-async def ingest_all_sources() -> dict:
+def ingest_all_sources() -> dict:
     """
     Ingest events from all enabled sources.
 
@@ -134,7 +137,7 @@ async def ingest_all_sources() -> dict:
     total_errors = 0
 
     for source in sources:
-        result = await ingest_source(source.id)
+        result = ingest_source(source.id)
         if result["success"]:
             total_new += result.get("new_events", 0)
             total_duplicates += result.get("duplicates", 0)

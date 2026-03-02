@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from prometheus_client import Counter, Histogram, generate_latest
 from sqlalchemy.orm import Session
 from starlette.responses import Response
+import httpx
 
 from packages.shared.config import get_settings
 from packages.shared.logging import configure_logging, get_logger
@@ -175,13 +176,90 @@ async def llm_health():
 
 @app.get("/llm/config", response_model=OllamaConfigResponse)
 async def get_llm_config():
-    """Get current Ollama/LLM configuration."""
+    """Get current Ollama/LLM configuration (runtime overrides from Redis > env)."""
+    from packages.ai.llm_service import get_runtime_llm_config
+
+    cfg = get_runtime_llm_config()
     return OllamaConfigResponse(
-        endpoint=settings.ollama.endpoint,
-        model=settings.ollama.model,
-        timeout_seconds=settings.ollama.timeout_seconds,
-        enabled=settings.ollama.enabled,
+        endpoint=cfg["endpoint"],
+        model=cfg["model"],
+        timeout_seconds=cfg["timeout_seconds"],
+        enabled=cfg["enabled"],
     )
+
+
+@app.put("/llm/config", response_model=OllamaConfigResponse)
+async def update_llm_config(body: OllamaConfigUpdate):
+    """
+    Update Ollama/LLM configuration at runtime.
+    Changes are stored in Redis and take effect on the next task/request
+    — no container restart needed.
+    """
+    from packages.ai.llm_service import set_runtime_llm_config
+
+    cfg = set_runtime_llm_config(
+        endpoint=body.endpoint,
+        model=body.model,
+        timeout_seconds=body.timeout_seconds,
+        enabled=body.enabled,
+    )
+    logger.info(
+        "llm_config_updated",
+        model=cfg["model"],
+        endpoint=cfg["endpoint"],
+        enabled=cfg["enabled"],
+    )
+    return OllamaConfigResponse(**cfg)
+
+
+class OllamaModelInfo(BaseModel):
+    name: str
+    size: Optional[str] = None
+    modified_at: Optional[str] = None
+
+
+class OllamaModelsResponse(BaseModel):
+    models: List[OllamaModelInfo]
+    endpoint: str
+
+
+@app.get("/llm/models", response_model=OllamaModelsResponse)
+async def list_llm_models():
+    """
+    List all models available on the Ollama server.
+    Proxied through the API so the browser never needs direct Ollama access.
+    """
+    from packages.ai.llm_service import get_runtime_llm_config
+
+    cfg = get_runtime_llm_config()
+    endpoint = cfg["endpoint"]
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{endpoint}/api/tags")
+            response.raise_for_status()
+            data = response.json()
+            models = [
+                OllamaModelInfo(
+                    name=m.get("name", "unknown"),
+                    size=_format_bytes(m.get("size", 0)),
+                    modified_at=m.get("modified_at"),
+                )
+                for m in data.get("models", [])
+            ]
+            return OllamaModelsResponse(models=models, endpoint=endpoint)
+    except Exception as e:
+        logger.warning("list_models_failed", error=str(e))
+        return OllamaModelsResponse(models=[], endpoint=endpoint)
+
+
+def _format_bytes(n: int) -> str:
+    """Human-readable byte size."""
+    for unit in ("B", "KB", "MB", "GB"):
+        if abs(n) < 1024:
+            return f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} TB"
 
 
 # Sources endpoints
@@ -311,11 +389,14 @@ async def get_analysis_summary(
     from packages.storage.models import Event as EventModel
 
     total = session.query(func.count(EventModel.id)).scalar() or 0
-    llm_done = session.query(func.count(EventModel.llm_processed_at)).filter(
+    llm_done = session.query(func.count(EventModel.id)).filter(
         EventModel.llm_processed_at.isnot(None)
     ).scalar() or 0
     with_data = session.execute(text(
-        "SELECT COUNT(*) FROM events WHERE array_length(categories, 1) > 0"
+        "SELECT COUNT(*) FROM events "
+        "WHERE array_length(categories, 1) > 0 "
+        "   OR array_length(actors, 1) > 0 "
+        "   OR array_length(themes, 1) > 0"
     )).scalar() or 0
 
     # Top categories

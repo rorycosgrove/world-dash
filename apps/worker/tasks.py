@@ -1,11 +1,12 @@
-"""
-Celery tasks for background processing.
-"""
+"""Celery tasks for background processing."""
 
 import asyncio
 from uuid import UUID
 
+import redis as _redis
+
 from .celery_app import app
+from packages.shared.config import get_settings
 from packages.shared.logging import get_logger
 from packages.feed_ingestion.tasks import ingest_all_sources, ingest_source
 from packages.storage.database import get_db_manager
@@ -16,39 +17,93 @@ from packages.shared.schemas import EventStatus
 
 logger = get_logger(__name__)
 
+_settings = get_settings()
+_redis_client = _redis.Redis(
+    host=_settings.redis.host, port=_settings.redis.port, db=_settings.redis.db,
+    decode_responses=True,
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _run_async(coro):
-    """Safely run async code from sync Celery tasks."""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, coro).result()
-        return loop.run_until_complete(coro)
-    except RuntimeError:
-        return asyncio.run(coro)
+    """Run async code from sync Celery tasks."""
+    return asyncio.run(coro)
 
 
-@app.task(name="apps.worker.tasks.ingest_all_sources_task")
+def _get_llm_service():
+    """Create LlamaService using runtime config from Redis (falls back to env)."""
+    from packages.ai.llm_service import get_llama_service
+    return get_llama_service()  # reads Redis inside
+
+
+# ---------------------------------------------------------------------------
+# Ingestion tasks  (queue: default)
+# ---------------------------------------------------------------------------
+
+@app.task(
+    name="apps.worker.tasks.ingest_all_sources_task",
+    soft_time_limit=120,
+    time_limit=180,
+)
 def ingest_all_sources_task():
-    """Celery task: Ingest all enabled sources."""
+    """Celery task: Ingest all enabled sources, each auto-enriching its events."""
     logger.info("task_started", task="ingest_all_sources")
-    result = _run_async(ingest_all_sources())
-    logger.info("task_completed", task="ingest_all_sources", result=result)
-    return result
+
+    # Dispatch per-source Celery tasks so each one chains into
+    # normalization → LLM → analysis automatically.
+    db_manager = get_db_manager()
+    with db_manager.get_session() as session:
+        from packages.storage.repositories import SourceRepository
+        repo = SourceRepository(session)
+        sources = repo.list_enabled()
+
+    dispatched = 0
+    for source in sources:
+        ingest_source_task.delay(str(source.id))
+        dispatched += 1
+
+    logger.info("task_completed", task="ingest_all_sources", dispatched=dispatched)
+    return {"success": True, "dispatched": dispatched}
 
 
-@app.task(name="apps.worker.tasks.ingest_source_task")
+@app.task(
+    name="apps.worker.tasks.ingest_source_task",
+    soft_time_limit=60,
+    time_limit=90,
+)
 def ingest_source_task(source_id: str):
-    """Celery task: Ingest single source."""
+    """Celery task: Ingest single source, then auto-enrich new events."""
     logger.info("task_started", task="ingest_source", source_id=source_id)
-    result = _run_async(ingest_source(UUID(source_id)))
-    logger.info("task_completed", task="ingest_source", source_id=source_id, result=result)
+    result = ingest_source(UUID(source_id))
+
+    # Immediately chain new events into the enrichment pipeline
+    # (ingestion → normalization → LLM categorization → analysis)
+    new_ids = result.get("new_event_ids", [])
+    for eid in new_ids:
+        normalize_event_task.delay(eid)
+
+    logger.info(
+        "task_completed",
+        task="ingest_source",
+        source_id=source_id,
+        new_events=len(new_ids),
+        auto_enrich=len(new_ids),
+    )
     return result
 
 
-@app.task(name="apps.worker.tasks.normalize_event_task")
+# ---------------------------------------------------------------------------
+# Normalization  (queue: default)
+# ---------------------------------------------------------------------------
+
+@app.task(
+    name="apps.worker.tasks.normalize_event_task",
+    soft_time_limit=30,
+    time_limit=60,
+)
 def normalize_event_task(event_id: str):
     """Celery task: Normalize and enrich event, then trigger LLM categorization."""
     logger.info("task_started", task="normalize_event", event_id=event_id)
@@ -59,17 +114,13 @@ def normalize_event_task(event_id: str):
     with db_manager.get_session() as session:
         event_repo = EventRepository(session)
 
-        # Get event
         event = event_repo.get_by_id(UUID(event_id))
         if not event:
             logger.error("event_not_found", event_id=event_id)
             return {"success": False, "error": "Event not found"}
 
-        # Normalize
         try:
             enriched_data = normalizer.normalize(event)
-
-            # Update event
             event_repo.update_enrichment(
                 event_id=UUID(event_id),
                 location=enriched_data.get("location"),
@@ -78,11 +129,10 @@ def normalize_event_task(event_id: str):
                 severity=enriched_data.get("severity"),
                 risk_score=enriched_data.get("risk_score"),
             )
-
             session.commit()
             logger.info("event_normalized", event_id=event_id)
 
-            # Chain: LLM categorization -> intelligence analysis
+            # Queue LLM categorization (goes to 'llm' queue automatically)
             llm_categorize_event_task.delay(event_id)
 
             return {"success": True}
@@ -94,18 +144,29 @@ def normalize_event_task(event_id: str):
             return {"success": False, "error": str(e)}
 
 
-@app.task(name="apps.worker.tasks.llm_categorize_event_task", bind=True, max_retries=2)
+# ---------------------------------------------------------------------------
+# LLM tasks  (queue: llm — consumed by llm-worker with concurrency=1)
+# ---------------------------------------------------------------------------
+
+@app.task(
+    name="apps.worker.tasks.llm_categorize_event_task",
+    bind=True,
+    max_retries=2,
+    soft_time_limit=150,
+    time_limit=180,
+    # No rate_limit — the llm-worker already runs concurrency=1, which
+    # naturally serialises Ollama requests.  A rate limit on top of that
+    # only adds artificial delay when a burst of new events arrives.
+)
 def llm_categorize_event_task(self, event_id: str):
     """
     Celery task: Use LLM to extract semantic categories for a single event.
-    Persists results to DB, then triggers intelligence analysis.
+    Runs on the 'llm' queue (concurrency=1) so Ollama gets one request at a time.
     """
     logger.info("task_started", task="llm_categorize_event", event_id=event_id)
 
-    from packages.ai.llm_service import get_llama_service
-
     db_manager = get_db_manager()
-    llm = get_llama_service()
+    llm = _get_llm_service()
 
     with db_manager.get_session() as session:
         event_repo = EventRepository(session)
@@ -116,7 +177,6 @@ def llm_categorize_event_task(self, event_id: str):
             return {"success": False, "error": "Event not found"}
 
         try:
-            # Use synchronous LLM call (no asyncio.run needed)
             context = llm.extract_event_context_sync(
                 title=event.title,
                 description=event.description,
@@ -124,8 +184,7 @@ def llm_categorize_event_task(self, event_id: str):
 
             has_data = bool(context["categories"] or context["actors"] or context["themes"])
 
-            # Always persist LLM results (even empty) to mark as processed
-            # This prevents infinite re-queuing of events that timeout or fail parsing
+            # Always mark as processed (even empty) to prevent re-queuing
             event_repo.update_llm_data(
                 event_id=UUID(event_id),
                 categories=context["categories"],
@@ -150,7 +209,6 @@ def llm_categorize_event_task(self, event_id: str):
                     reason="LLM returned no categories/actors/themes",
                 )
 
-            # Trigger intelligence analysis regardless
             analyze_event_task.delay(event_id)
 
             return {
@@ -161,38 +219,65 @@ def llm_categorize_event_task(self, event_id: str):
 
         except Exception as e:
             logger.error("llm_categorize_failed", event_id=event_id, error=str(e))
-            # Still trigger intelligence analysis even if LLM fails
-            analyze_event_task.delay(event_id)
-            return {"success": False, "error": str(e)}
+            # Retry on transient errors (connection, timeout); after max
+            # retries, fall through to analysis without LLM data.
+            try:
+                raise self.retry(exc=e, countdown=15 * (self.request.retries + 1))
+            except self.MaxRetriesExceededError:
+                logger.warning("llm_max_retries_exceeded", event_id=event_id)
+                analyze_event_task.delay(event_id)
+                return {"success": False, "error": str(e)}
 
 
-@app.task(name="apps.worker.tasks.llm_categorize_events_task")
+@app.task(
+    name="apps.worker.tasks.llm_categorize_events_task",
+    soft_time_limit=30,
+    time_limit=60,
+)
 def llm_categorize_events_task():
     """
-    Celery task (periodic): Find events that haven't been LLM-processed yet
-    and queue them for categorization.
+    Periodic batch: Find unprocessed events and queue them for LLM.
+    Uses a Redis lock to prevent overlapping batches.
     """
-    logger.info("task_started", task="llm_categorize_events_batch")
+    LOCK_KEY = "worlddash:llm_batch_lock"
+    LOCK_TTL = 280  # just under beat interval (300s)
+    BATCH_SIZE = 5
 
-    db_manager = get_db_manager()
+    # Distributed lock — skip if a previous batch is still running
+    if not _redis_client.set(LOCK_KEY, "1", nx=True, ex=LOCK_TTL):
+        logger.info("llm_batch_skipped", reason="previous batch still running")
+        return {"success": True, "queued": 0, "skipped": True}
 
-    with db_manager.get_session() as session:
-        event_repo = EventRepository(session)
-        unprocessed = event_repo.list_unprocessed_by_llm(limit=5)
+    try:
+        logger.info("task_started", task="llm_categorize_events_batch")
 
-    logger.info("llm_batch_queued", count=len(unprocessed))
+        db_manager = get_db_manager()
+        with db_manager.get_session() as session:
+            event_repo = EventRepository(session)
+            unprocessed = event_repo.list_unprocessed_by_llm(limit=BATCH_SIZE)
 
-    # Stagger tasks so Ollama processes one at a time (~30s each)
-    for i, event in enumerate(unprocessed):
-        llm_categorize_event_task.apply_async(
-            args=[str(event.id)],
-            countdown=i * 35,  # 35s stagger per event
-        )
+        logger.info("llm_batch_queued", count=len(unprocessed))
 
-    return {"success": True, "queued": len(unprocessed)}
+        # No stagger needed — llm-worker has concurrency=1 so tasks
+        # naturally execute one-at-a-time in FIFO order.
+        for event in unprocessed:
+            llm_categorize_event_task.delay(str(event.id))
+
+        return {"success": True, "queued": len(unprocessed)}
+    finally:
+        # Release lock if we finish quickly (otherwise TTL handles it)
+        _redis_client.delete(LOCK_KEY)
 
 
-@app.task(name="apps.worker.tasks.analyze_event_task")
+# ---------------------------------------------------------------------------
+# Analysis tasks  (queue: default)
+# ---------------------------------------------------------------------------
+
+@app.task(
+    name="apps.worker.tasks.analyze_event_task",
+    soft_time_limit=30,
+    time_limit=60,
+)
 def analyze_event_task(event_id: str):
     """Celery task: Analyze event and generate alerts."""
     logger.info("task_started", task="analyze_event", event_id=event_id)
@@ -204,28 +289,22 @@ def analyze_event_task(event_id: str):
         event_repo = EventRepository(session)
         alert_repo = AlertRepository(session)
 
-        # Get event
         event = event_repo.get_by_id(UUID(event_id))
         if not event:
             logger.error("event_not_found", event_id=event_id)
             return {"success": False, "error": "Event not found"}
 
-        # Analyze
         try:
             alerts = engine.analyze(event)
-
-            # Create alerts
             created_count = 0
             for alert_create in alerts:
                 alert_repo.create(alert_create)
                 created_count += 1
 
-            # Mark as processed
             event_repo.update_status(UUID(event_id), EventStatus.PROCESSED)
             session.commit()
 
             logger.info("event_analyzed", event_id=event_id, alerts_created=created_count)
-
             return {"success": True, "alerts_created": created_count}
 
         except Exception as e:
@@ -233,25 +312,30 @@ def analyze_event_task(event_id: str):
             return {"success": False, "error": str(e)}
 
 
-@app.task(name="apps.worker.tasks.process_new_events")
+@app.task(
+    name="apps.worker.tasks.process_new_events",
+    soft_time_limit=30,
+    time_limit=60,
+)
 def process_new_events():
-    """Celery task (periodic): Process all raw events through normalization pipeline."""
+    """Celery task (periodic): Safety-net for any RAW events that missed auto-enrichment."""
     logger.info("task_started", task="process_new_events")
 
     db_manager = get_db_manager()
 
     with db_manager.get_session() as session:
         event_repo = EventRepository(session)
-
-        # Get raw events
         raw_events = event_repo.list_recent(
-            limit=100,
+            limit=50,  # cap per cycle to avoid flooding
             status=EventStatus.RAW,
         )
 
+        if not raw_events:
+            logger.info("no_raw_events_found")
+            return {"success": True, "queued": 0}
+
         logger.info("processing_raw_events", count=len(raw_events))
 
-        # Queue normalization tasks
         for event in raw_events:
             normalize_event_task.delay(str(event.id))
 
