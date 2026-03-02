@@ -1,306 +1,227 @@
-# ⚡ World Dash - Quick Start Guide
+# ⚡ World Dash — Quick Start
 
 Get the geopolitical intelligence dashboard running in **5 minutes**.
 
 ## Prerequisites
 
 - Docker Desktop installed and running
-- Git (to clone or download the project)
-- 8GB RAM minimum
-- (Optional) Mapbox account for map visualization
+- 8 GB RAM minimum
+- (Optional) Ollama installed locally for LLM enrichment
+- (Optional) Mapbox token for map visualization
 
-## Step 1: Get the Code
+## Step 1: Configure Environment
 
 ```powershell
 cd c:\code\world-dash
-```
 
-## Step 2: Configure Environment
-
-```powershell
 # Copy environment template
 Copy-Item .env.example .env
 
-# Edit .env in your favorite editor
+# Edit .env — set at minimum:
 notepad .env
 ```
 
-**Required Changes**:
-1. Change `POSTGRES_PASSWORD` from `changeme_in_production` to a secure password
-2. (Optional) Add `NEXT_PUBLIC_MAPBOX_TOKEN` - Get free token at https://mapbox.com/signup
-
-**Minimum .env**:
+**Required:**
 ```env
 POSTGRES_PASSWORD=YourSecurePassword123!
-NEXT_PUBLIC_MAPBOX_TOKEN=pk.your_token_here  # Optional
 ```
 
-## Step 3: Start Services
+**Optional (recommended):**
+```env
+NEXT_PUBLIC_MAPBOX_TOKEN=pk.your_token_here     # Free at https://mapbox.com/signup
+OLLAMA_ENDPOINT=http://host.docker.internal:11434
+OLLAMA_MODEL=llama3.2
+OLLAMA_ENABLED=true
+```
+
+## Step 2: Start Services
 
 ```powershell
-# Build and start all services
-docker-compose up -d
+# Build and start all 7 services
+docker compose up -d
 
-# Wait 30 seconds for services to initialize...
+# Wait for services to initialize (~30 seconds)
 Start-Sleep -Seconds 30
 
-# Check services are healthy
-docker-compose ps
+# Verify all services are running
+docker compose ps
 ```
 
-You should see 6 running services:
-- worlddash-postgres
-- worlddash-redis  
-- worlddash-api
-- worlddash-worker
-- worlddash-beat
-- worlddash-web
+You should see 7 running services:
+| Service | Container | Status |
+|---------|-----------|--------|
+| postgres | worlddash-postgres | healthy |
+| redis | worlddash-redis | healthy |
+| api | worlddash-api | running |
+| worker | worlddash-worker | running |
+| llm-worker | worlddash-llm-worker | running |
+| beat | worlddash-beat | running |
+| web | worlddash-web | running |
 
-## Step 4: Initialize Database
+## Step 3: Seed Feed Sources
 
 ```powershell
-# Run database migrations (see alembic/README.md)
-
-# Seed with 15 RSS feed sources
-docker-compose exec api python scripts/seed.py
+docker compose exec api python scripts/seed.py
 ```
 
-## Step 5: Access the Dashboard
+This adds 15 RSS feed sources (defense, geopolitics, security outlets).
 
-Open your browser to:
+## Step 4: Open the Dashboard
 
-🌐 **Frontend Dashboard**: http://localhost:3000
+| URL | Description |
+|-----|-------------|
+| http://localhost:3000 | **Dashboard** — main interface |
+| http://localhost:3000/settings | **Settings** — manage sources + Ollama config |
+| http://localhost:8000/docs | **API docs** — interactive Swagger UI |
+| http://localhost:8000/health | **Health check** — verify API status |
 
-📚 **API Documentation**: http://localhost:8000/docs
+## Step 5: Verify It's Working
 
-💚 **Health Check**: http://localhost:8000/health
-
-## Step 6: Verify It's Working
-
-### Check Feed Ingestion
+### Check worker activity
 
 ```powershell
-# View worker logs (should show ingestion activity)
-docker-compose logs -f worker
+docker compose logs -f worker
 ```
 
-Wait a few minutes for the first scheduled ingestion (runs every 5 min).
+The beat scheduler triggers ingestion every 5 minutes. After the first cycle, you'll see events in the dashboard.
 
-### Check API
+### Don't want to wait? Trigger ingestion now
 
 ```powershell
-# Get sources
+curl -X POST http://localhost:8000/sources/ingest-all
+```
+
+Or use the script:
+```powershell
+.\scripts\trigger-ingestion.ps1
+```
+
+Events will appear in the dashboard within 1–2 minutes.
+
+### Check the API
+
+```powershell
+# List sources
 curl http://localhost:8000/sources
 
-# Get events (may be empty initially)
-curl http://localhost:8000/events
+# List events (empty until first ingestion completes)
+curl "http://localhost:8000/events?limit=10"
+
+# Check analysis summary
+curl http://localhost:8000/analysis/summary
 ```
 
-### Check Dashboard
+## Step 6: Configure LLM (Optional)
 
-1. Open http://localhost:3000
-2. You should see:
-   - Empty event feed initially
-   - World map centered on the globe
-   - Alert panel (no alerts yet)
-   - Severity filter buttons
+If Ollama is running locally, enable LLM enrichment:
 
-After the first ingestion cycle (~5 minutes), events will appear.
+**Option A** — Settings page:
+1. Open http://localhost:3000/settings
+2. Switch to the **Ollama** tab
+3. Set endpoint to `http://host.docker.internal:11434`
+4. Select a model (e.g. `llama3.2`)
+5. Toggle enabled and save
 
-## 🔥 Trigger Immediate Ingestion
-
-Don't want to wait? Trigger ingestion manually:
-
+**Option B** — API call:
 ```powershell
-# Connect to API container
-docker-compose exec api python
-
-# In Python shell:
-from apps.worker.tasks import ingest_all_sources_task
-ingest_all_sources_task.delay()
-exit()
-
-# Watch the logs
-docker-compose logs -f worker
+curl -X PUT "http://localhost:8000/llm/config" `
+  -H "Content-Type: application/json" `
+  -d '{"endpoint": "http://host.docker.internal:11434", "model": "llama3.2", "timeout": 120, "enabled": true}'
 ```
 
-Events will appear in the dashboard within 1-2 minutes!
+LLM enrichment adds categories, actors, themes, and significance to each event. The `llm-worker` processes events one at a time to avoid overloading Ollama.
 
-## 🛠️ Common Commands
+## What to Expect
+
+### First 5 minutes
+- Services start and initialize
+- Database schema created automatically
+- 15 RSS sources configured (after seeding)
+- Waiting for first poll cycle
+
+### After 5–10 minutes
+- First ingestion completes — 10–50 events appear
+- Events show in the network graph and event feed
+- Normalization adds tags, entities, locations
+- Alerts may be generated for high-risk events
+
+### After 30 minutes (with LLM enabled)
+- Events enriched with LLM categories, actors, themes
+- Network graph shows meaningful clusters
+- Compare mode available for cross-event analysis
+- Analysis summary ring shows LLM scan progress
+
+## Common Commands
 
 ```powershell
 # View all logs
-docker-compose logs -f
+docker compose logs -f
 
-# View specific service logs
-docker-compose logs -f api
-docker-compose logs -f worker
+# View specific service
+docker compose logs -f llm-worker
 
-# Restart services
-docker-compose restart
+# Restart all services
+docker compose restart
+
+# Rebuild after code changes
+.\rebuild.ps1
+
+# Rebuild specific service
+.\rebuild.ps1 -Services api
 
 # Stop all services
-docker-compose down
+docker compose down
 
 # Stop and remove all data (DESTRUCTIVE)
-docker-compose down -v
+docker compose down -v
 ```
 
-## 🧪 Test the API
-
-### Get Events
-```powershell
-# Get latest 10 events
-curl "http://localhost:8000/events?limit=10"
-
-# Get high severity events
-curl "http://localhost:8000/events?severity=high"
-
-# Get events from last 24 hours
-curl "http://localhost:8000/events?since_hours=24"
-```
-
-### Add Custom Feed
-```powershell
-curl -X POST "http://localhost:8000/sources" `
-  -H "Content-Type: application/json" `
-  -d '{
-    "name": "My Custom Feed",
-    "url": "https://example.com/rss",
-    "type": "rss",
-    "enabled": true,
-    "tags": ["custom"]
-  }'
-```
-
-### Get Alerts
-```powershell
-# Get unacknowledged alerts
-curl "http://localhost:8000/alerts?acknowledged=false"
-
-# Acknowledge alert (replace {id} with actual alert ID)
-curl -X POST "http://localhost:8000/alerts/{id}/acknowledge"
-```
-
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Services won't start
 ```powershell
-# Check Docker is running
-docker info
-
-# Check logs
-docker-compose logs
-
-# Try rebuilding
-docker-compose down
-docker-compose build --no-cache
-docker-compose up -d
+docker info                     # Is Docker running?
+docker compose logs             # Check errors
+docker compose down
+docker compose build --no-cache
+docker compose up -d
 ```
 
-### Database connection errors
+### Database errors
 ```powershell
-# Check PostgreSQL is healthy
-docker-compose ps postgres
-docker-compose logs postgres
-
-# Restart database
-docker-compose restart postgres
-
-# Wait for health check
-Start-Sleep -Seconds 10
-```
-
-### Frontend not loading
-```powershell
-# Check API is reachable
-curl http://localhost:8000/health
-
-# Check web service
-docker-compose logs web
-
-# Restart frontend
-docker-compose restart web
+docker compose logs postgres
+docker compose restart postgres
+Start-Sleep 10
 ```
 
 ### No events appearing
 ```powershell
-# Check worker is running
-docker-compose ps worker
-
-# Check worker logs for errors
-docker-compose logs worker
-
-# Manually trigger ingestion
-docker-compose exec api python -c "from apps.worker.tasks import ingest_all_sources_task; ingest_all_sources_task()"
+docker compose logs -f worker       # Check for ingestion activity
+curl http://localhost:8000/sources   # Verify sources exist
+curl -X POST http://localhost:8000/sources/ingest-all  # Trigger manually
 ```
 
-### Map not displaying
-- Get a free Mapbox token at https://mapbox.com/signup
-- Add to `.env`: `NEXT_PUBLIC_MAPBOX_TOKEN=pk.your_token`
-- Restart: `docker-compose restart web`
-
-## 🎯 What to Expect
-
-### First 5 Minutes
-- Services start up
-- Database initialized
-- 15 RSS sources configured
-- No events yet (waiting for first poll)
-
-### After 5-10 Minutes
-- First ingestion completes
-- 10-50 events in database
-- Events appear on map
-- Event feed populated
-- Possible alerts generated
-
-### After 1 Hour
-- 100-500 events collected
-- Multiple ingestion cycles completed
-- Alert rules triggered
-- Full dashboard experience
-
-## 📖 Next Steps
-
-1. **Read the README**: [README.md](README.md)
-2. **Explore the API**: http://localhost:8000/docs
-3. **Add More Sources**: Edit `scripts/seed.py` or use API
-4. **Customize Alert Rules**: Edit `packages/intelligence_engine/engine.py`
-5. **Review Architecture**: [ARCHITECTURE.md](ARCHITECTURE.md)
-6. **Start Development**: [DEVELOPMENT.md](DEVELOPMENT.md)
-
-## 🆘 Need Help?
-
-Check the documentation:
-- [README.md](README.md) - Main documentation
-- [DEVELOPMENT.md](DEVELOPMENT.md) - Development guide
-- [PHASE1-COMPLETE.md](PHASE1-COMPLETE.md) - Feature overview
-- API Docs: http://localhost:8000/docs
-
-View logs for debugging:
+### Frontend not loading
 ```powershell
-# All services
-docker-compose logs -f
-
-# Specific service
-docker-compose logs -f [api|worker|beat|web|postgres|redis]
+curl http://localhost:8000/health    # API reachable?
+docker compose logs web             # Frontend errors?
+docker compose restart web
 ```
 
-## ✅ Success Checklist
+### LLM not enriching events
+```powershell
+curl http://localhost:8000/llm/health   # Ollama reachable?
+docker compose ps llm-worker           # Worker running?
+docker compose logs -f llm-worker      # Check logs
+curl http://localhost:8000/llm/config   # Config correct?
+```
 
-- [ ] All 6 services running (`docker-compose ps`)
-- [ ] Database migrations completed
-- [ ] 15 sources seeded
-- [ ] API health check returns `{"status": "healthy"}`
-- [ ] Frontend loads at http://localhost:3000
-- [ ] Worker logs show ingestion activity
-- [ ] Events appear in dashboard (after first poll)
+## Next Steps
 
----
-
-**You're all set!** 🎉
-
-The World Dash geopolitical intelligence dashboard is now running.
-
-Monitor world events, track military movements, and analyze geopolitical signals in real-time.
+1. **Explore the network graph** — click events, Ctrl+click to compare, try different groupings
+2. **Add more sources** — use the Settings page or API
+3. **Configure LLM** — enable Ollama for deeper enrichment
+4. **Read the docs**:
+   - [README.md](README.md) — project overview
+   - [ARCHITECTURE.md](ARCHITECTURE.md) — system design and data model
+   - [DEVELOPMENT.md](DEVELOPMENT.md) — development workflow and debugging

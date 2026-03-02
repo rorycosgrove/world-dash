@@ -1,161 +1,251 @@
-# World Dash - Architecture Decision Records
+# World Dash — Architecture
 
-## ADR-001: Modular Monolith over Microservices
-
-**Date**: 2026-03-01  
-**Status**: Accepted
-
-### Context
-Need to build a scalable system but want to avoid premature microservices complexity.
-
-### Decision
-Use modular monolith with clear package boundaries. Each module (ingestion, normalization, intelligence) is independently replaceable.
-
-### Consequences
-- Faster initial development
-- Easier debugging and testing
-- Can extract to microservices later when needed
-- Must maintain strict module boundaries
+This document describes the system architecture, key design decisions, data flow, and component responsibilities.
 
 ---
 
-## ADR-002: Repository Pattern for Data Access
+## System Overview
 
-**Date**: 2026-03-01  
-**Status**: Accepted
+World Dash is a **modular monolith** deployed as 7 Docker services. The backend is Python (FastAPI + Celery), the frontend is Next.js 14, and the system uses PostgreSQL/PostGIS for storage and Redis for messaging, caching, and runtime configuration.
 
-### Context
-Need clean abstraction over SQLAlchemy to enable testing and future database changes.
-
-### Decision
-Implement repository pattern with dedicated repository classes per entity type.
-
-### Consequences
-- Business logic decoupled from database
-- Easy to mock for testing
-- Can swap database implementations
-- Slight overhead of additional layer
-
----
-
-## ADR-003: Celery for Task Queue
-
-**Date**: 2026-03-01  
-**Status**: Accepted
-
-### Context
-Need async task processing for feed ingestion and event processing.
-
-### Decision
-Use Celery with Redis broker (can migrate to Kafka later).
-
-### Consequences
-- Well-established Python task queue
-- Supports scheduling (Celery Beat)
-- Easy to scale workers
-- Redis dependency (acceptable for MVP)
+```
+                    ┌────────────┐
+                    │   Browser  │
+                    └─────┬──────┘
+                          │ HTTP :3000
+                    ┌─────▼──────┐       ┌──────────────┐
+                    │    web     │──────►│    api       │ :8000
+                    │ (Next.js)  │ fetch │  (FastAPI)   │
+                    └────────────┘       └──┬───┬───┬───┘
+                                            │   │   │
+                          ┌─────────────────┘   │   └─────────────────┐
+                          ▼                     ▼                     ▼
+                    ┌───────────┐        ┌───────────┐        ┌───────────┐
+                    │  worker   │        │llm-worker │        │   beat    │
+                    │(default Q)│        │ (llm Q)   │        │(scheduler)│
+                    └─────┬─────┘        └─────┬─────┘        └───────────┘
+                          │                    │
+                          ▼                    ▼
+                    ┌───────────┐        ┌───────────┐
+                    │ postgres  │        │  Ollama   │ (external)
+                    │ (PostGIS) │        │  LLM API  │
+                    └───────────┘        └───────────┘
+                    ┌───────────┐
+                    │   redis   │ (broker + config)
+                    └───────────┘
+```
 
 ---
 
-## ADR-004: Pydantic for Validation
+## Architecture Decision Records
 
-**Date**: 2026-03-01  
+### ADR-001: Modular Monolith over Microservices
+
 **Status**: Accepted
 
-### Context
-Need data validation and serialization across API and internal modules.
+All business logic lives in `packages/` with strict module boundaries. Each module (ingestion, normalization, intelligence, AI) is independently replaceable. This avoids premature distributed systems complexity while retaining the option to extract microservices later.
 
-### Decision
-Use Pydantic v2 for all schemas and validation.
+### ADR-002: Repository Pattern for Data Access
 
-### Consequences
-- Type-safe validation
-- Auto-generated OpenAPI docs
-- Excellent performance
-- Standard in FastAPI ecosystem
+**Status**: Accepted
+
+`packages/storage/repositories.py` implements the repository pattern over SQLAlchemy. Business logic in workers and API endpoints never touches ORM models directly — they work through repositories that return Pydantic schemas.
+
+### ADR-003: Dual Celery Workers with Queue Isolation
+
+**Status**: Accepted
+
+Two separate Celery worker processes:
+- **worker** — handles fast tasks (ingestion, normalization, analysis) on the `default` queue with concurrency=4
+- **llm-worker** — handles slow Ollama LLM calls on the `llm` queue with concurrency=1
+
+This prevents slow LLM tasks from blocking the fast ingestion pipeline.
+
+### ADR-004: Auto-chained Task Pipeline
+
+**Status**: Accepted
+
+Tasks auto-chain via `.delay()` calls at the end of each step:
+```
+ingest_source_task → normalize_event_task → llm_categorize_event_task → analyze_event_task
+```
+
+This ensures every ingested event is fully enriched without manual intervention or separate orchestration.
+
+### ADR-005: Runtime LLM Configuration via Redis
+
+**Status**: Accepted
+
+LLM settings (endpoint, model, timeout, enabled) are stored in Redis under `worlddash:llm_config:*` keys. The API's `/llm/config` endpoint writes to Redis, and workers read from Redis on every task execution. This allows reconfiguring the LLM without restarting any services.
+
+### ADR-006: PostGIS for Geospatial Data
+
+**Status**: Accepted
+
+PostgreSQL with PostGIS extension provides efficient spatial queries. Events store both a JSONB `location` field (country, region, city, confidence) and a PostGIS `POINT` geometry with SRID 4326 for geospatial indexing.
+
+### ADR-007: Zustand for Frontend State
+
+**Status**: Accepted
+
+Zustand provides lightweight global state management. The `dashboard.ts` store holds events, alerts, selected event, filters, and auto-refresh toggle — accessible by all components without prop drilling.
+
+### ADR-008: SVG-based Network Visualization
+
+**Status**: Accepted
+
+The `EventNetworkMap` component renders an SVG-based force-directed graph rather than using a mapping library. This provides full control over node layout, grouping, interaction (pan/zoom/hover/select), and avoids external API key dependencies.
+
+### ADR-009: Structured Logging with structlog
+
+**Status**: Accepted
+
+All Python services use structlog for JSON-formatted structured logging. This provides consistent, parseable logs with context propagation, compatible with ELK/Loki aggregation.
 
 ---
 
-## ADR-005: PostGIS for Geospatial Data
+## Data Flow
 
-**Date**: 2026-03-01  
-**Status**: Accepted
+### Ingestion → Visualization Pipeline
 
-### Context
-Need efficient geospatial queries for location-based event filtering.
+```
+1. beat                    schedules ingest_all_sources_task every 5 min
+2. worker                  ingest_all_sources_task dispatches per-source tasks
+3. worker                  ingest_source_task fetches RSS, deduplicates, stores events
+4. worker                  normalize_event_task extracts locations, entities, tags, severity
+5. llm-worker              llm_categorize_event_task calls Ollama for categories/actors/themes
+6. worker                  analyze_event_task runs intelligence engine, generates alerts
+7. api                     frontend polls /events, /alerts, /analysis/summary
+8. web                     EventNetworkMap renders enriched events as interactive graph
+```
 
-### Decision
-Use PostgreSQL with PostGIS extension.
+### API → Frontend Data Flow
 
-### Consequences
-- Powerful spatial queries
-- Standard geospatial data types
-- Excellent performance with spatial indexes
-- Mature ecosystem
-
----
-
-## ADR-006: Next.js for Frontend
-
-**Date**: 2026-03-01  
-**Status**: Accepted
-
-### Context
-Need modern, fast frontend with SSR capabilities.
-
-### Decision
-Use Next.js 14 with TypeScript and Tailwind CSS.
-
-### Consequences
-- Great developer experience
-- SSR/SSG options for performance
-- Built-in routing
-- Large ecosystem
+```
+web (Zustand store)
+  ├─ polls GET /events          → EventFeed, EventNetworkMap
+  ├─ polls GET /alerts          → AlertPanel
+  ├─ polls GET /analysis/summary → AnalysisSummary (progress ring)
+  ├─ GET /events/{id}/analyze-context → EventNetworkMap (context mode)
+  └─ Settings page
+       ├─ GET/PUT /llm/config   → Ollama configuration
+       ├─ GET /llm/models       → Model selection dropdown
+       └─ CRUD /sources         → Feed source management
+```
 
 ---
 
-## ADR-007: Mapbox GL for Mapping
+## Data Model
 
-**Date**: 2026-03-01  
-**Status**: Accepted
+### Source (`sources` table)
+| Column | Type | Description |
+|--------|------|-------------|
+| id | UUID (PK) | Primary key |
+| name | String | Display name |
+| url | String (unique) | RSS/Atom feed URL |
+| type | Enum (rss, atom, api) | Source type |
+| enabled | Boolean | Whether to poll |
+| tags | String[] | Classification tags |
+| last_polled_at | DateTime | Last poll timestamp |
+| last_success_at | DateTime | Last successful poll |
+| last_error | String | Most recent error message |
+| error_count | Integer | Consecutive error count |
+| total_events | Integer | Lifetime events ingested |
 
-### Context
-Need high-performance interactive maps with custom styling.
+### Event (`events` table)
+| Column | Type | Description |
+|--------|------|-------------|
+| id | UUID (PK) | Primary key |
+| source_id | UUID (FK) | Owning source |
+| title | String | Event headline |
+| description | Text | Event body |
+| url | String | Original article URL |
+| content_hash | String (unique) | SHA-256 for deduplication |
+| raw_content | Text | Original feed content |
+| status | Enum | new, processing, processed, error |
+| severity | Enum | low, medium, high, critical |
+| risk_score | Float | 0.0–1.0 heuristic score |
+| tags | String[] | Auto-assigned tags |
+| entities | JSONB | Extracted entities |
+| location | JSONB | Country/region/city/confidence |
+| location_point | PostGIS POINT | Geospatial coordinates (SRID 4326) |
+| **categories** | String[] | LLM-extracted categories |
+| **actors** | String[] | LLM-extracted actors |
+| **themes** | String[] | LLM-extracted themes |
+| **llm_significance** | String | LLM-assessed significance |
+| **llm_processed_at** | DateTime | When LLM processing completed |
+| published_at | DateTime | Original publication time |
+| created_at | DateTime | Ingestion timestamp |
 
-### Decision
-Use Mapbox GL JS (with Leaflet as potential alternative).
-
-### Consequences
-- Beautiful, customizable maps
-- WebGL-based performance
-- Requires API key (free tier available)
-- Can swap for Leaflet if needed
+### Alert (`alerts` table)
+| Column | Type | Description |
+|--------|------|-------------|
+| id | UUID (PK) | Primary key |
+| event_id | UUID (FK) | Triggering event |
+| title | String | Alert headline |
+| description | Text | Alert details |
+| severity | Enum | low, medium, high, critical |
+| acknowledged | Boolean | Whether operator acknowledged |
+| created_at | DateTime | Alert creation time |
 
 ---
 
-## ADR-008: Structured Logging with structlog
+## Frontend Components
 
-**Date**: 2026-03-01  
-**Status**: Accepted
-
-### Context
-Need consistent, parseable logs for observability.
-
-### Decision
-Use structlog for JSON-formatted structured logging.
-
-### Consequences
-- Easy to parse and query logs
-- Consistent format across services
-- Context propagation
-- ELK/Loki compatible
+| Component | Responsibility |
+|-----------|---------------|
+| `page.tsx` | 3-column dashboard layout (feed / main / debug) |
+| `layout.tsx` | Root layout with navigation bar |
+| `settings/page.tsx` | Sources management + Ollama configuration tabs |
+| `EventNetworkMap.tsx` | Interactive SVG network graph (overview/context/compare modes, pan/zoom, hover, multi-select) |
+| `EventFeed.tsx` | Live event list with auto-refresh, severity indicators, LLM debug logging |
+| `AnalysisSummary.tsx` | Top bar with LLM scan progress ring and key insights |
+| `FilterBar.tsx` | Severity filter buttons |
+| `AlertPanel.tsx` | Alert list with acknowledge action |
+| `DebugLog.tsx` | Console-style debug panel with LLM processing pattern detection |
 
 ---
 
-## Future Decisions to Make
+## Module Responsibilities
 
-- ADR-009: ML Framework Selection (Phase 3)
-- ADR-010: Event Streaming Platform (Phase 5 - Kafka)
-- ADR-011: Search Engine (Phase 5 - OpenSearch)
-- ADR-012: Authentication Strategy (Phase 2)
-- ADR-013: Caching Strategy (Phase 2)
+| Package | Responsibility |
+|---------|---------------|
+| `packages/ai/` | Ollama HTTP client, runtime Redis config, sync+async interfaces |
+| `packages/feed_ingestion/` | RSS/Atom parsing, content-hash deduplication |
+| `packages/event_normalizer/` | Location/entity/tag extraction, severity/risk scoring |
+| `packages/intelligence_engine/` | Rule-based alert triggers, event clustering |
+| `packages/storage/` | SQLAlchemy models, repository pattern, session management |
+| `packages/shared/` | Pydantic settings, structured logging, common schemas, utilities |
+
+---
+
+## Infrastructure
+
+### Docker Services
+
+All services are defined in `docker-compose.yml` at the project root. Dockerfiles live in `infra/`.
+
+| Dockerfile | Service | Base |
+|-----------|---------|------|
+| `infra/Dockerfile.api` | api | python:3.12-slim |
+| `infra/Dockerfile.worker` | worker | python:3.12-slim |
+| `infra/Dockerfile.llm-worker` | llm-worker | python:3.12-slim |
+| `infra/Dockerfile.beat` | beat | python:3.12-slim |
+| `infra/Dockerfile.web` | web | node:20 |
+
+### Database Migrations
+
+Managed by Alembic with version scripts in `alembic/versions/`:
+- `001_initial_schema.py` — Sources, Events, Alerts tables with PostGIS
+- `002_add_llm_columns.py` — categories, actors, themes, llm_significance, llm_processed_at
+
+### Volumes
+
+| Volume | Purpose |
+|--------|---------|
+| `postgres_data` | Persistent database storage |
+| `redis_data` | Redis persistence |
+
+### Network
+
+Single Docker bridge network `worlddash` connecting all services.
