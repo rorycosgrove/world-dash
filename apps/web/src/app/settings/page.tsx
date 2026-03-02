@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { api, Source, OllamaModelInfo, CloudAIConfig } from '@/lib/api';
+import { api, Source, OllamaModelInfo, CloudAIConfig, CloudAIProvider } from '@/lib/api';
 import toast from 'react-hot-toast';
 
 interface NewSource {
@@ -44,7 +44,7 @@ export default function SettingsPage() {
   const [testingHealth, setTestingHealth] = useState(false);
 
   // ---- cloud AI config ----
-  const [cloudProvider, setCloudProvider] = useState('openai');
+  const [cloudProvider, setCloudProvider] = useState<CloudAIProvider>('openai');
   const [cloudApiKey, setCloudApiKey] = useState('');
   const [cloudModel, setCloudModel] = useState('gpt-4o-mini');
   const [cloudEndpoint, setCloudEndpoint] = useState('');
@@ -248,7 +248,7 @@ export default function SettingsPage() {
       } as any);
       setSources(sources.map((s) =>
         s.id === sourceId
-          ? { ...s, auth_header: feedAuthHeader || undefined, auth_token: feedAuthToken || undefined }
+          ? { ...s, auth_header: feedAuthHeader || null, auth_token: feedAuthToken || null }
           : s,
       ));
       setFeedAuthEditing(null);
@@ -637,7 +637,7 @@ export default function SettingsPage() {
                 <label className="block text-sm font-medium text-gray-300 mb-1">Provider</label>
                 <select
                   value={cloudProvider}
-                  onChange={(e) => setCloudProvider(e.target.value)}
+                  onChange={(e) => setCloudProvider(e.target.value as CloudAIProvider)}
                   className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100 text-sm focus:border-purple-500 focus:outline-none"
                 >
                   <option value="openai">OpenAI</option>

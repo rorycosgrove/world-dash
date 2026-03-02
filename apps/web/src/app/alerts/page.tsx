@@ -257,9 +257,9 @@ export default function AlertsPage() {
                     <button
                       onClick={() => alert.event_id && openDrawer(alert.event_id)}
                       className="text-left hover:text-highlight transition-colors"
-                      title={alert.message}
+                      title={alert.title}
                     >
-                      {alert.message}
+                      {alert.title}
                     </button>
                   </td>
                   <td className="px-3 py-2 text-gray-500 text-xs hidden md:table-cell whitespace-nowrap">
