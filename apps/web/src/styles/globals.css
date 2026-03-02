@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+body {
+  @apply bg-primary text-gray-100;
+}
+
+.analyst-panel {
+  @apply bg-secondary border border-gray-700 rounded-lg shadow-lg;
+}
+
+.severity-low {
+  @apply text-green-400;
+}
+
+.severity-medium {
+  @apply text-yellow-400;
+}
+
+.severity-high {
+  @apply text-orange-400;
+}
+
+.severity-critical {
+  @apply text-red-500 font-bold;
+}

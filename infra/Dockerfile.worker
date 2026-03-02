@@ -1,0 +1,25 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    libpq-dev \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY packages/ ./packages/
+COPY apps/worker/ ./apps/worker/
+COPY apps/api/ ./apps/api/
+
+# Set Python path
+ENV PYTHONPATH=/app
+
+CMD ["celery", "-A", "apps.worker.celery_app", "worker", "--loglevel=info"]

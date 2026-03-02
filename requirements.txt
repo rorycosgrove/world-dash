@@ -1,0 +1,35 @@
+# Core Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# Database
+sqlalchemy==2.0.25
+alembic==1.13.1
+psycopg2-binary==2.9.9
+geoalchemy2==0.14.3
+shapely==2.0.2
+numpy<2
+
+# Cache & Queue
+redis==5.0.1
+celery==5.3.6
+
+# HTTP & Parsing
+httpx==0.26.0
+feedparser==6.0.11
+newspaper3k==0.2.8
+beautifulsoup4==4.12.3
+lxml==5.1.0
+
+# Geo & Date
+geopy==2.4.1
+python-dateutil==2.8.2
+
+# Observability
+structlog==24.1.0
+prometheus-client==0.19.0
+
+# Utils
+python-multipart==0.0.6
