@@ -1,7 +1,7 @@
 """Add auth columns to sources
 
-Revision ID: 003
-Revises: 002_add_llm_columns
+Revision ID: 003_add_source_auth
+Revises: 002
 Create Date: 2025-01-01 00:00:00.000000
 
 """
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "003_add_source_auth"
-down_revision = "002_add_llm_columns"
+down_revision = "002"
 branch_labels = None
 depends_on = None
 

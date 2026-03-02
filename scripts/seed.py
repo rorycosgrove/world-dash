@@ -24,12 +24,6 @@ SAMPLE_SOURCES = [
         "tags": ["military", "defense"],
     },
     {
-        "name": "Jane's Defence Weekly",
-        "url": "https://www.janes.com/feeds/defence-industry",
-        "type": "rss",
-        "tags": ["military", "intelligence"],
-    },
-    {
         "name": "Military Times",
         "url": "https://www.militarytimes.com/arc/outboundfeeds/rss/",
         "type": "rss",
@@ -52,24 +46,6 @@ SAMPLE_SOURCES = [
         "url": "https://warontherocks.com/feed/",
         "type": "rss",
         "tags": ["analysis", "strategy", "military"],
-    },
-    {
-        "name": "CSIS - Security",
-        "url": "https://www.csis.org/analysis/feed",
-        "type": "rss",
-        "tags": ["analysis", "policy", "security"],
-    },
-    {
-        "name": "ISW - Russia Updates",
-        "url": "https://www.understandingwar.org/rss.xml",
-        "type": "rss",
-        "tags": ["conflict", "russia", "ukraine"],
-    },
-    {
-        "name": "Reuters - World News",
-        "url": "https://www.reutersagency.com/feed/",
-        "type": "rss",
-        "tags": ["news", "global"],
     },
     {
         "name": "BBC News - World",
@@ -96,16 +72,40 @@ SAMPLE_SOURCES = [
         "tags": ["analysis", "terrorism", "security"],
     },
     {
-        "name": "IISS - Analysis",
-        "url": "https://www.iiss.org/blogs/analysis/feed/",
-        "type": "rss",
-        "tags": ["analysis", "strategic", "military"],
-    },
-    {
         "name": "Foreign Policy - Security",
         "url": "https://foreignpolicy.com/feed/",
         "type": "rss",
         "tags": ["policy", "geopolitics", "analysis"],
+    },
+    {
+        "name": "NPR World News",
+        "url": "https://feeds.npr.org/1004/rss.xml",
+        "type": "rss",
+        "tags": ["news", "global"],
+    },
+    {
+        "name": "Bellingcat",
+        "url": "https://www.bellingcat.com/feed/",
+        "type": "rss",
+        "tags": ["osint", "investigation", "conflict"],
+    },
+    {
+        "name": "The Guardian - World",
+        "url": "https://www.theguardian.com/world/rss",
+        "type": "rss",
+        "tags": ["news", "global"],
+    },
+    {
+        "name": "DW News - World",
+        "url": "https://rss.dw.com/xml/rss-en-world",
+        "type": "rss",
+        "tags": ["news", "global", "europe"],
+    },
+    {
+        "name": "Brookings - Foreign Policy",
+        "url": "https://www.brookings.edu/topic/foreign-policy/feed/",
+        "type": "rss",
+        "tags": ["analysis", "policy", "geopolitics"],
     },
 ]
 
