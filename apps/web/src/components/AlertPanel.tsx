@@ -77,7 +77,9 @@ export default function AlertPanel() {
             )}
 
             <div className="text-xs text-gray-400">
-              {formatDistanceToNow(new Date(alert.created_at), { addSuffix: true })}
+              {alert.created_at
+                ? formatDistanceToNow(new Date(alert.created_at), { addSuffix: true })
+                : 'Timestamp unavailable'}
             </div>
           </div>
         ))}

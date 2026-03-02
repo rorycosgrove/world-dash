@@ -1,23 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { api } from '@/lib/api';
-
-interface Source {
-  id: string;
-  name: string;
-  url: string;
-  type: string;
-  enabled: boolean;
-  tags: string[];
-  last_polled_at: string | null;
-  last_success_at: string | null;
-  last_error: string | null;
-  error_count: number;
-  total_events: number;
-  created_at: string;
-  updated_at: string;
-}
+import { api, Source } from '@/lib/api';
 
 interface NewSource {
   name: string;

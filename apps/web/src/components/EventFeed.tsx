@@ -112,6 +112,8 @@ export default function EventFeed() {
           filteredEvents.map((event: Event) => {
             const sig = event.llm_significance || event.severity;
             const isSelected = selectedEvent?.id === event.id;
+            const categories = event.categories ?? [];
+            const actors = event.actors ?? [];
 
             return (
               <div
@@ -140,9 +142,9 @@ export default function EventFeed() {
                 </div>
 
                 {/* Category/actor chips — compact, max 1 row */}
-                {(event.categories?.length > 0 || event.actors?.length > 0) && (
+                {(categories.length > 0 || actors.length > 0) && (
                   <div className="flex gap-1 mt-1.5 flex-wrap max-h-6 overflow-hidden">
-                    {event.categories?.slice(0, 2).map((cat: string) => (
+                    {categories.slice(0, 2).map((cat: string) => (
                       <span
                         key={cat}
                         className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-300 capitalize"
@@ -150,7 +152,7 @@ export default function EventFeed() {
                         {cat}
                       </span>
                     ))}
-                    {event.actors?.slice(0, 2).map((actor: string) => (
+                    {actors.slice(0, 2).map((actor: string) => (
                       <span
                         key={actor}
                         className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300"
