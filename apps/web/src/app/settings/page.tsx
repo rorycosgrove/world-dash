@@ -1,29 +1,7 @@
 'use client';
 
-<<<<<<< HEAD
-import { useEffect, useState } from 'react';
-import { api, Source } from '@/lib/api';
-=======
 import { useEffect, useState, useCallback } from 'react';
-import { api } from '@/lib/api';
-
-// ---- types ----
-interface Source {
-  id: string;
-  name: string;
-  url: string;
-  type: string;
-  enabled: boolean;
-  tags: string[];
-  last_polled_at: string | null;
-  last_success_at: string | null;
-  last_error: string | null;
-  error_count: number;
-  total_events: number;
-  created_at: string;
-  updated_at: string;
-}
->>>>>>> main
+import { api, Source, OllamaModelInfo } from '@/lib/api';
 
 interface NewSource {
   name: string;
@@ -31,12 +9,6 @@ interface NewSource {
   type: string;
   tags: string[];
   enabled: boolean;
-}
-
-interface OllamaModel {
-  name: string;
-  size: string | null;
-  modified_at: string | null;
 }
 
 type TabType = 'sources' | 'ollama';
@@ -63,7 +35,7 @@ export default function SettingsPage() {
   const [cfgModel, setCfgModel] = useState('');
   const [cfgTimeout, setCfgTimeout] = useState(120);
   const [cfgEnabled, setCfgEnabled] = useState(true);
-  const [availableModels, setAvailableModels] = useState<OllamaModel[]>([]);
+  const [availableModels, setAvailableModels] = useState<OllamaModelInfo[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);

@@ -1,0 +1,33 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install uv (fast Python package installer)
+RUN pip install --no-cache-dir uv
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    libpq-dev \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy project metadata first (better layer caching)
+COPY pyproject.toml ./
+COPY uv.lock ./
+
+# Copy application code
+COPY packages/ ./packages/
+COPY apps/worker/ ./apps/worker/
+COPY apps/api/ ./apps/api/
+
+# Install dependencies
+RUN uv pip install --system -e .
+
+# Set Python path
+ENV PYTHONPATH=/app
+
+# Dedicated LLM worker: concurrency=1, only consumes 'llm' queue.
+# This guarantees Ollama gets exactly one request at a time.
+CMD ["celery", "-A", "apps.worker.celery_app", "worker", "-Q", "llm", "--concurrency=1", "--loglevel=info", "-n", "llm@%h"]

@@ -804,12 +804,25 @@ export default function EventNetworkMap() {
                   <span className="text-gray-500 text-[10px]">📍 {hoveredNode.event.location.country}</span>
                 )}
               </div>
-              {hoveredNode.event.categories?.length > 0 && (
-                <div className="text-gray-500 mt-1 text-[10px]">🔴 {hoveredNode.event.categories.slice(0, 3).join(', ')}</div>
-              )}
-              {hoveredNode.event.actors?.length > 0 && (
-                <div className="text-gray-500 text-[10px]">🔵 {hoveredNode.event.actors.slice(0, 2).join(', ')}</div>
-              )}
+              {(() => {
+                const categories = hoveredNode.event?.categories ?? [];
+                const actors = hoveredNode.event?.actors ?? [];
+
+                return (
+                  <>
+                    {categories.length > 0 && (
+                      <div className="text-gray-500 mt-1 text-[10px]">
+                        🔴 {categories.slice(0, 3).join(', ')}
+                      </div>
+                    )}
+                    {actors.length > 0 && (
+                      <div className="text-gray-500 text-[10px]">
+                        🔵 {actors.slice(0, 2).join(', ')}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </>
           )}
 

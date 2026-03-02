@@ -104,8 +104,8 @@ services:
   # Celery LLM Worker (slow tasks: Ollama — concurrency=1)
   llm-worker:
     build:
-      context: .
-      dockerfile: infra/Dockerfile.llm-worker
+      context: ..
+      dockerfile: Dockerfile.llm-worker
     container_name: worlddash-llm-worker
     environment:
       POSTGRES_HOST: postgres
