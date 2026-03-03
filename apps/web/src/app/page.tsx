@@ -7,6 +7,9 @@ import FilterBar from '@/components/FilterBar';
 import AnalysisSummary from '@/components/AnalysisSummary';
 import AlertPanel from '@/components/AlertPanel';
 import EventDetailDrawer from '@/components/EventDetailDrawer';
+import ClusterPanel from '@/components/ClusterPanel';
+import CompareBar from '@/components/CompareBar';
+import CompareView from '@/components/CompareView';
 import { useDashboardStore } from '@/store/dashboard';
 import clsx from 'clsx';
 
@@ -54,12 +57,17 @@ export default function Home() {
             </div>
           )}
 
+          {/* Cluster Panel */}
+          <div className="flex-shrink-0 px-3 pt-2">
+            <ClusterPanel />
+          </div>
+
           {/* Filter Bar + View Toggle */}
           <div className="flex-shrink-0 p-3 flex items-center gap-2">
             <div className="flex-1 min-w-0">
               <FilterBar />
             </div>
-            {/* Map / Network toggle */}
+            {/* Map / Network / Compare toggle */}
             <div className="flex items-center gap-1 flex-shrink-0 bg-secondary border border-gray-700 rounded-lg p-0.5">
               <button
                 onClick={() => setViewMode('network')}
@@ -85,12 +93,33 @@ export default function Home() {
               >
                 🗺️ Map
               </button>
+              <button
+                onClick={() => setViewMode('compare')}
+                className={clsx(
+                  'text-[11px] px-2.5 py-1 rounded-md transition-colors',
+                  viewMode === 'compare'
+                    ? 'bg-purple-600 text-white'
+                    : 'text-gray-400 hover:text-gray-300'
+                )}
+                title="Compare Events"
+              >
+                📊 Compare
+              </button>
             </div>
           </div>
 
+          {/* Compare Bar — persistent across views */}
+          <CompareBar />
+
           {/* Main Visualization */}
           <div className="flex-1 min-h-0 px-3 pb-3">
-            {viewMode === 'network' ? <EventNetworkMap /> : <WorldMap />}
+            {viewMode === 'compare' ? (
+              <CompareView />
+            ) : viewMode === 'network' ? (
+              <EventNetworkMap />
+            ) : (
+              <WorldMap />
+            )}
           </div>
 
           {/* Mobile Event Feed (shown only on small screens) */}

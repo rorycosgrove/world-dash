@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { formatDistanceToNow, format } from 'date-fns';
 import { useDashboardStore } from '@/store/dashboard';
+import { useChatStore } from '@/store/chat';
 import { api, Event, EventContext } from '@/lib/api';
 import clsx from 'clsx';
 
@@ -40,7 +41,8 @@ function RiskGauge({ score }: { score: number }) {
 }
 
 export default function EventDetailDrawer() {
-  const { selectedEventId, closeDrawer, events } = useDashboardStore();
+  const { selectedEventId, closeDrawer, events, pinnedEventIds, togglePinEvent } = useDashboardStore();
+  const { setContextEventId, openChat } = useChatStore();
   const [event, setEvent] = useState<Event | null>(null);
   const [context, setContext] = useState<EventContext | null>(null);
   const [loading, setLoading] = useState(true);
@@ -139,6 +141,32 @@ export default function EventDetailDrawer() {
               ✕
             </button>
           </div>
+
+          {/* Action buttons */}
+          {selectedEventId && (
+            <div className="flex items-center gap-2 mt-2">
+              <button
+                onClick={() => togglePinEvent(selectedEventId)}
+                className={clsx(
+                  'text-xs px-2.5 py-1 rounded border transition-colors',
+                  pinnedEventIds.has(selectedEventId)
+                    ? 'border-amber-500/50 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
+                    : 'border-gray-600 text-gray-400 hover:border-amber-500/50 hover:text-amber-300'
+                )}
+              >
+                📌 {pinnedEventIds.has(selectedEventId) ? 'Pinned' : 'Pin for Compare'}
+              </button>
+              <button
+                onClick={() => {
+                  setContextEventId(selectedEventId);
+                  openChat();
+                }}
+                className="text-xs px-2.5 py-1 rounded border border-gray-600 text-gray-400 hover:border-accent/50 hover:text-blue-300 transition-colors"
+              >
+                💬 Chat about this
+              </button>
+            </div>
+          )}
         </div>
 
         {loading ? (

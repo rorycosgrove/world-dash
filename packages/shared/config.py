@@ -98,6 +98,7 @@ class OllamaSettings(BaseSettings):
 
     endpoint: str = Field(default="http://localhost:11434", alias="OLLAMA_ENDPOINT")
     model: str = Field(default="llama2", alias="OLLAMA_MODEL")
+    embedding_model: str = Field(default="nomic-embed-text", alias="OLLAMA_EMBEDDING_MODEL")
     timeout_seconds: int = Field(default=60, alias="OLLAMA_TIMEOUT_SECONDS")
     enabled: bool = Field(default=True, alias="OLLAMA_ENABLED")
 

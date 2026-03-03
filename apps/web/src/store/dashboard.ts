@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import { Event, Alert } from '@/lib/api';
+import { Event, Alert, ChartSpec } from '@/lib/api';
 
-export type ViewMode = 'network' | 'map';
+export type ViewMode = 'network' | 'map' | 'compare';
 export type SortBy = 'time' | 'severity' | 'risk_score';
 export type DateRange = '1h' | '6h' | '24h' | '7d' | '30d';
 
@@ -14,6 +14,11 @@ interface DashboardState {
   selectedEvent: Event | null;
   selectedEventId: string | null;
   drawerOpen: boolean;
+
+  // Compare / Pin
+  pinnedEventIds: Set<string>;
+  compareMode: boolean;
+  activeChartSpec: ChartSpec | null;
 
   // Filters
   filterSeverity: string | null;
@@ -37,6 +42,11 @@ interface DashboardState {
   setSelectedEvent: (event: Event | null) => void;
   openDrawer: (eventId: string) => void;
   closeDrawer: () => void;
+  togglePinEvent: (id: string) => void;
+  pinEvents: (ids: string[]) => void;
+  clearPins: () => void;
+  setCompareMode: (on: boolean) => void;
+  setActiveChartSpec: (spec: ChartSpec | null) => void;
   setFilterSeverity: (severity: string | null) => void;
   setFilterCategory: (category: string | null) => void;
   setSearchQuery: (query: string) => void;
@@ -60,6 +70,11 @@ export const useDashboardStore = create<DashboardState>((set) => ({
   selectedEventId: null,
   drawerOpen: false,
 
+  // Compare / Pin
+  pinnedEventIds: new Set<string>(),
+  compareMode: false,
+  activeChartSpec: null,
+
   // Filters
   filterSeverity: null,
   filterCategory: null,
@@ -82,6 +97,26 @@ export const useDashboardStore = create<DashboardState>((set) => ({
   setSelectedEvent: (event) => set({ selectedEvent: event }),
   openDrawer: (eventId) => set({ selectedEventId: eventId, drawerOpen: true }),
   closeDrawer: () => set({ selectedEventId: null, drawerOpen: false }),
+
+  togglePinEvent: (id) =>
+    set((state) => {
+      const next = new Set(state.pinnedEventIds);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      // Auto-exit compare mode when fewer than 2 pins
+      const compareMode = next.size >= 2 ? state.compareMode : false;
+      return { pinnedEventIds: next, compareMode };
+    }),
+  pinEvents: (ids) =>
+    set((state) => {
+      const next = new Set(state.pinnedEventIds);
+      ids.forEach((id) => next.add(id));
+      return { pinnedEventIds: next };
+    }),
+  clearPins: () => set({ pinnedEventIds: new Set<string>(), compareMode: false, activeChartSpec: null }),
+  setCompareMode: (on) => set({ compareMode: on }),
+  setActiveChartSpec: (spec) => set({ activeChartSpec: spec }),
+
   setFilterSeverity: (severity) => set({ filterSeverity: severity }),
   setFilterCategory: (category) => set({ filterCategory: category }),
   setSearchQuery: (query) => set({ searchQuery: query }),

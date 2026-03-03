@@ -16,6 +16,12 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
+  Treemap,
+  Radar,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
 } from 'recharts';
 import { format, parseISO, startOfHour, subHours } from 'date-fns';
 
@@ -109,7 +115,7 @@ export default function AnalyticsPage() {
     return Object.entries(buckets).map(([time, count]) => ({ time, count }));
   })();
 
-  // Severity distribution
+  // Severity distribution (PieChart)
   const severityData = (() => {
     const counts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
     events.forEach((e) => {
@@ -119,6 +125,49 @@ export default function AnalyticsPage() {
     return Object.entries(counts)
       .filter(([, v]) => v > 0)
       .map(([name, value]) => ({ name, value }));
+  })();
+
+  // Severity timeline — stacked area (severity breakdown over time)
+  const severityTimelineData = (() => {
+    const now = new Date();
+    const buckets: Record<string, { time: string; critical: number; high: number; medium: number; low: number }> = {};
+    for (let i = 47; i >= 0; i--) {
+      const hour = startOfHour(subHours(now, i));
+      const key = format(hour, 'MMM d HH:00');
+      buckets[key] = { time: key, critical: 0, high: 0, medium: 0, low: 0 };
+    }
+    events.forEach((e) => {
+      try {
+        const hour = startOfHour(parseISO(e.published_at));
+        const key = format(hour, 'MMM d HH:00');
+        const sev = (e.llm_significance || e.severity || 'low') as keyof typeof buckets[string];
+        if (key in buckets && sev in buckets[key]) (buckets[key] as any)[sev]++;
+      } catch {}
+    });
+    return Object.values(buckets);
+  })();
+
+  // Category treemap data
+  const categoryTreeData = (() => {
+    const cats = summary?.top_categories || [];
+    if (cats.length === 0) return [];
+    return cats.slice(0, 12).map((c: { name: string; count: number }, i: number) => ({
+      name: c.name,
+      size: c.count,
+      fill: CHART_COLORS[i % CHART_COLORS.length],
+    }));
+  })();
+
+  // Actor radar data
+  const actorRadarData = (() => {
+    const actors = summary?.top_actors || [];
+    if (actors.length === 0) return [];
+    const max = Math.max(...actors.map((a: { count: number }) => a.count), 1);
+    return actors.slice(0, 8).map((a: { name: string; count: number }) => ({
+      actor: a.name.length > 12 ? a.name.slice(0, 11) + '…' : a.name,
+      mentions: a.count,
+      fullMark: max,
+    }));
   })();
 
   // Processing pipeline status

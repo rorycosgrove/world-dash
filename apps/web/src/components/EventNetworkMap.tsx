@@ -88,10 +88,280 @@ function zoomBy(t: Transform, factor: number, sz: { width: number; height: numbe
 }
 
 // ---------------------------------------------------------------------------
+// Force-directed simulation (runs after initial radial layout)
+// ---------------------------------------------------------------------------
+
+interface SimNode {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  size: number;
+  pinned?: boolean; // hub nodes can be pinned to reduce jitter
+}
+
+function runForceSimulation(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  iterations: number = 60,
+  options: {
+    repulsion?: number;
+    attraction?: number;
+    damping?: number;
+    labelPadding?: number;
+    centerGravity?: number;
+    bounds?: { width: number; height: number };
+  } = {}
+): GraphNode[] {
+  if (nodes.length <= 1) return nodes;
+
+  const {
+    repulsion = 3000,
+    attraction = 0.005,
+    damping = 0.85,
+    labelPadding = 18,
+    centerGravity = 0.01,
+    bounds,
+  } = options;
+
+  const cx = bounds ? bounds.width / 2 : 0;
+  const cy = bounds ? bounds.height / 2 : 0;
+
+  // Build edge lookup
+  const edgeMap = new Map<string, Set<string>>();
+  edges.forEach(e => {
+    if (!edgeMap.has(e.sourceId)) edgeMap.set(e.sourceId, new Set());
+    if (!edgeMap.has(e.targetId)) edgeMap.set(e.targetId, new Set());
+    edgeMap.get(e.sourceId)!.add(e.targetId);
+    edgeMap.get(e.targetId)!.add(e.sourceId);
+  });
+
+  // Initialize simulation nodes
+  const simNodes: SimNode[] = nodes.map(n => ({
+    id: n.id,
+    x: n.x,
+    y: n.y,
+    vx: 0,
+    vy: 0,
+    size: n.size,
+    pinned: false,
+  }));
+
+  const idxMap = new Map<string, number>();
+  simNodes.forEach((n, i) => idxMap.set(n.id, i));
+
+  for (let iter = 0; iter < iterations; iter++) {
+    const temp = 1 - iter / iterations; // cooling factor
+
+    // Repulsion between all node pairs (Barnes-Hut would be better for >200 nodes)
+    for (let i = 0; i < simNodes.length; i++) {
+      for (let j = i + 1; j < simNodes.length; j++) {
+        const a = simNodes[i];
+        const b = simNodes[j];
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const minDist = a.size + b.size + labelPadding;
+
+        // Strong repulsion when overlapping, normal repulsion otherwise
+        let force: number;
+        if (dist < minDist) {
+          force = (repulsion * 2) / (dist * dist + 1);
+        } else {
+          force = repulsion / (dist * dist + 1);
+        }
+
+        const fx = (dx / dist) * force * temp;
+        const fy = (dy / dist) * force * temp;
+
+        if (!a.pinned) { a.vx -= fx; a.vy -= fy; }
+        if (!b.pinned) { b.vx += fx; b.vy += fy; }
+      }
+    }
+
+    // Attraction along edges
+    edges.forEach(edge => {
+      const si = idxMap.get(edge.sourceId);
+      const ti = idxMap.get(edge.targetId);
+      if (si === undefined || ti === undefined) return;
+
+      const a = simNodes[si];
+      const b = simNodes[ti];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+
+      const force = dist * attraction * edge.weight * temp;
+      const fx = (dx / dist) * force;
+      const fy = (dy / dist) * force;
+
+      if (!a.pinned) { a.vx += fx; a.vy += fy; }
+      if (!b.pinned) { b.vx -= fx; b.vy -= fy; }
+    });
+
+    // Center gravity
+    if (bounds) {
+      simNodes.forEach(n => {
+        if (n.pinned) return;
+        n.vx += (cx - n.x) * centerGravity * temp;
+        n.vy += (cy - n.y) * centerGravity * temp;
+      });
+    }
+
+    // Apply velocities with damping
+    simNodes.forEach(n => {
+      if (n.pinned) return;
+      n.vx *= damping;
+      n.vy *= damping;
+      n.x += n.vx;
+      n.y += n.vy;
+
+      // Keep within bounds
+      if (bounds) {
+        const pad = 40;
+        n.x = Math.max(pad, Math.min(bounds.width - pad, n.x));
+        n.y = Math.max(pad, Math.min(bounds.height - pad, n.y));
+      }
+    });
+  }
+
+  // Map simulated positions back to GraphNode objects
+  return nodes.map(n => {
+    const idx = idxMap.get(n.id);
+    if (idx === undefined) return n;
+    const sim = simNodes[idx];
+    return { ...n, x: sim.x, y: sim.y };
+  });
+}
+
+// Label collision avoidance (post-process)
+function resolveLabels(
+  nodes: GraphNode[],
+  maxIter: number = 20,
+): GraphNode[] {
+  if (nodes.length <= 1) return nodes;
+
+  // Label bounding boxes (approximate)
+  interface LabelBox {
+    idx: number;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  }
+
+  const charWidth = 5.5; // approximate px per char at ~10px font
+  const lineHeight = 14;
+
+  const boxes: LabelBox[] = nodes.map((n, i) => {
+    const labelLen = Math.min(n.label.length, 22);
+    const w = labelLen * charWidth;
+    const h = lineHeight;
+    return {
+      idx: i,
+      x: n.x - w / 2,
+      y: n.y + n.size + 4,
+      w,
+      h,
+    };
+  });
+
+  // Iterative repulsion to resolve overlaps
+  for (let iter = 0; iter < maxIter; iter++) {
+    let moved = false;
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i];
+        const b = boxes[j];
+
+        // Check overlap
+        const overlapX = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+        const overlapY = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+
+        if (overlapX > 0 && overlapY > 0) {
+          // Push apart in the direction of least overlap
+          const pushX = overlapX / 2 + 2;
+          const pushY = overlapY / 2 + 1;
+
+          if (overlapX < overlapY) {
+            if (a.x < b.x) { a.x -= pushX; b.x += pushX; }
+            else { a.x += pushX; b.x -= pushX; }
+          } else {
+            if (a.y < b.y) { a.y -= pushY; b.y += pushY; }
+            else { a.y += pushY; b.y -= pushY; }
+          }
+          moved = true;
+        }
+      }
+    }
+    if (!moved) break;
+  }
+
+  // Apply adjusted label positions as metadata (we'll store label offsets)
+  return nodes.map((n, i) => {
+    const box = boxes[i];
+    // Compute label offset relative to default position
+    const defaultLabelX = n.x;
+    const defaultLabelY = n.y + n.size + 4 + lineHeight / 2;
+    const labelX = box.x + box.w / 2;
+    const labelY = box.y + box.h / 2;
+
+    return {
+      ...n,
+      meta: {
+        ...n.meta,
+        labelOffsetX: labelX - defaultLabelX,
+        labelOffsetY: labelY - defaultLabelY,
+      },
+    };
+  });
+}
+
+// Hard overlap resolution — guarantees no node circles overlap
+function resolveOverlaps(
+  nodes: GraphNode[],
+  padding: number = 6,
+  maxIter: number = 80,
+): GraphNode[] {
+  if (nodes.length <= 1) return nodes;
+
+  const pos = nodes.map(n => ({ x: n.x, y: n.y, r: n.size + padding }));
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    let maxOverlap = 0;
+    for (let i = 0; i < pos.length; i++) {
+      for (let j = i + 1; j < pos.length; j++) {
+        const a = pos[i];
+        const b = pos[j];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
+        const minDist = a.r + b.r;
+        if (dist < minDist) {
+          const overlap = minDist - dist;
+          maxOverlap = Math.max(maxOverlap, overlap);
+          const nx = dx / dist;
+          const ny = dy / dist;
+          const push = overlap / 2 + 0.5;
+          a.x -= nx * push;
+          a.y -= ny * push;
+          b.x += nx * push;
+          b.y += ny * push;
+        }
+      }
+    }
+    if (maxOverlap < 0.5) break;
+  }
+
+  return nodes.map((n, i) => ({ ...n, x: pos[i].x, y: pos[i].y }));
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 export default function EventNetworkMap() {
-  const { events, selectedEvent, setSelectedEvent } = useDashboardStore();
+  const { events, selectedEvent, setSelectedEvent, pinnedEventIds, togglePinEvent, clearPins, compareMode, setCompareMode } = useDashboardStore();
 
   // --- View state ---
   const [viewMode, setViewMode] = useState<ViewMode>('overview');
@@ -112,8 +382,8 @@ export default function EventNetworkMap() {
   const panStart = useRef({ x: 0, y: 0, tx: 0, ty: 0 });
   const didPan = useRef(false);
 
-  // --- Multi-select ---
-  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+  // --- Multi-select (from global store) ---
+  const pinnedIds = pinnedEventIds;
 
   // --- Hover ---
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
@@ -144,6 +414,15 @@ export default function EventNetworkMap() {
     if (viewMode === 'compare' && pinnedIds.size === 0) setViewMode('overview');
   }, [pinnedIds.size, viewMode]);
 
+  // Sync local viewMode with store compareMode
+  useEffect(() => {
+    if (compareMode && pinnedIds.size >= 2) {
+      setSelectedEvent(null);
+      setContextData(null);
+      setViewMode('compare');
+    }
+  }, [compareMode, pinnedIds.size, setSelectedEvent]);
+
   // Build local context helper
   const buildLocalContext = useCallback((event: Event): EventContext => {
     const cats = event.categories?.length ? event.categories : event.tags?.slice(0, 3) || ['Analysis'];
@@ -169,7 +448,8 @@ export default function EventNetworkMap() {
       if (viewMode === 'context') setViewMode(pinnedIds.size >= 2 ? 'compare' : 'overview');
       return;
     }
-    setViewMode('context');
+    // Don't exit compare mode when clicking an event — only show context if not comparing
+    if (viewMode !== 'compare') setViewMode('context');
     const hasLLM = Boolean(selectedEvent.categories?.length || selectedEvent.actors?.length || selectedEvent.themes?.length);
     if (hasLLM) {
       setContextData(buildLocalContext(selectedEvent));
@@ -248,12 +528,8 @@ export default function EventNetworkMap() {
   const handleMouseUp = useCallback(() => { setIsPanning(false); }, []);
 
   const togglePin = useCallback((eventId: string) => {
-    setPinnedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(eventId)) next.delete(eventId); else next.add(eventId);
-      return next;
-    });
-  }, []);
+    togglePinEvent(eventId);
+  }, [togglePinEvent]);
 
   const fitToContent = useCallback((nodeList: GraphNode[]) => {
     if (nodeList.length === 0) { setTransform({ x: 0, y: 0, k: 1 }); return; }
@@ -506,13 +782,130 @@ export default function EventNetworkMap() {
   }, [size, viewMode, groupBy, selectedEvent, contextData, events, pinnedIds]);
 
   // ===================================================================
+  // FORCE SIMULATION + LABEL COLLISION RESOLUTION
+  // ===================================================================
+  const { simulatedNodes, simulatedEdges } = useMemo(() => {
+    if (nodes.length === 0) return { simulatedNodes: nodes, simulatedEdges: edges };
+
+    // Force-directed simulation with stronger repulsion to separate nodes
+    let processed = runForceSimulation(nodes, edges, 90, {
+      repulsion: nodes.length > 30 ? 5500 : 3500,
+      attraction: 0.005,
+      damping: 0.82,
+      labelPadding: 22,
+      centerGravity: 0.012,
+      bounds: size,
+    });
+
+    // Hard constraint: guarantee no circle overlap
+    processed = resolveOverlaps(processed, 6, 80);
+
+    // Resolve label overlaps
+    processed = resolveLabels(processed, 15);
+
+    return { simulatedNodes: processed, simulatedEdges: edges };
+  }, [nodes, edges, size]);
+
+  // ===================================================================
+  // ELASTIC SPRING ANIMATION
+  // ===================================================================
+  const animPositions = useRef<Map<string, { x: number; y: number; vx: number; vy: number }>>(new Map());
+  const animFrameRef = useRef<number>(0);
+  const targetNodesRef = useRef(simulatedNodes);
+  targetNodesRef.current = simulatedNodes;
+  const [, triggerRender] = useState(0);
+
+  useEffect(() => {
+    const targets = simulatedNodes;
+    if (targets.length === 0) {
+      animPositions.current.clear();
+      return;
+    }
+
+    const state = animPositions.current;
+    const cx = size.width / 2;
+    const cy = size.height / 2;
+    const currentIds = new Set(targets.map((n: GraphNode) => n.id));
+
+    // Initialise new nodes: spawn from centre for a "bloom" effect
+    targets.forEach((node: GraphNode) => {
+      if (!state.has(node.id)) {
+        state.set(node.id, { x: cx, y: cy, vx: 0, vy: 0 });
+      }
+    });
+
+    // Remove stale node state
+    state.forEach((_: any, id: string) => {
+      if (!currentIds.has(id)) state.delete(id);
+    });
+
+    let active = true;
+    const STIFFNESS = 0.09;
+    const FRICTION = 0.72;
+
+    const step = () => {
+      if (!active) return;
+      const tgt = targetNodesRef.current;
+      let settled = true;
+
+      tgt.forEach((node: GraphNode) => {
+        const s = state.get(node.id);
+        if (!s) return;
+        const dx = node.x - s.x;
+        const dy = node.y - s.y;
+        s.vx = (s.vx + dx * STIFFNESS) * FRICTION;
+        s.vy = (s.vy + dy * STIFFNESS) * FRICTION;
+        s.x += s.vx;
+        s.y += s.vy;
+        if (Math.abs(dx) > 0.3 || Math.abs(dy) > 0.3 || Math.abs(s.vx) > 0.05 || Math.abs(s.vy) > 0.05) {
+          settled = false;
+        }
+      });
+
+      // Snap to exact positions once motion stops
+      if (settled) {
+        tgt.forEach((node: GraphNode) => {
+          const s = state.get(node.id);
+          if (s) { s.x = node.x; s.y = node.y; s.vx = 0; s.vy = 0; }
+        });
+      }
+
+      triggerRender((c: number) => c + 1);
+
+      if (!settled) {
+        animFrameRef.current = requestAnimationFrame(step);
+      }
+    };
+
+    cancelAnimationFrame(animFrameRef.current);
+    animFrameRef.current = requestAnimationFrame(step);
+
+    return () => {
+      active = false;
+      cancelAnimationFrame(animFrameRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [simulatedNodes]);
+
+  // Build display nodes from animated positions
+  const displayNodes = (() => {
+    const state = animPositions.current;
+    if (state.size === 0) return simulatedNodes;
+    return simulatedNodes.map((node: GraphNode) => {
+      const s = state.get(node.id);
+      return s ? { ...node, x: s.x, y: s.y } : node;
+    });
+  })();
+
+  // ===================================================================
   // DERIVED
   // ===================================================================
   const nodeById = useMemo(() => {
     const m = new Map<string, GraphNode>();
-    nodes.forEach((n: GraphNode) => m.set(n.id, n));
+    displayNodes.forEach((n: GraphNode) => m.set(n.id, n));
     return m;
-  }, [nodes]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayNodes]);
 
   const hoveredNode = hoveredNodeId ? nodeById.get(hoveredNodeId) ?? null : null;
 
@@ -521,7 +914,7 @@ export default function EventNetworkMap() {
     if (!hoveredNodeId) return { connectedNodeIds: null as Set<string> | null, highlightedEdgeIds: null as Set<string> | null };
     const nids = new Set<string>([hoveredNodeId]);
     const eids = new Set<string>();
-    edges.forEach((e: GraphEdge) => {
+    simulatedEdges.forEach((e: GraphEdge) => {
       if (e.sourceId === hoveredNodeId || e.targetId === hoveredNodeId) {
         eids.add(e.id);
         nids.add(e.sourceId);
@@ -529,7 +922,7 @@ export default function EventNetworkMap() {
       }
     });
     return { connectedNodeIds: nids, highlightedEdgeIds: eids };
-  }, [hoveredNodeId, edges]);
+  }, [hoveredNodeId, simulatedEdges]);
 
   const cfg = GROUP_CONFIGS[groupBy];
 
@@ -573,13 +966,13 @@ export default function EventNetworkMap() {
           <div className="flex gap-1 text-xs">
             {viewMode !== 'compare' && pinnedIds.size >= 2 && (
               <button
-                onClick={() => { setSelectedEvent(null); setContextData(null); setViewMode('compare'); }}
+                onClick={() => { setSelectedEvent(null); setContextData(null); setViewMode('compare'); setCompareMode(true); }}
                 className="px-2 py-1 rounded border border-amber-600 bg-amber-600/20 text-amber-300 hover:bg-amber-600/30 transition-colors">
                 🔍 Compare {pinnedIds.size}
               </button>
             )}
             <button
-              onClick={() => { setPinnedIds(new Set()); if (viewMode === 'compare') setViewMode('overview'); }}
+              onClick={() => { clearPins(); if (viewMode === 'compare') setViewMode('overview'); }}
               className="px-2 py-1 rounded border border-gray-600 text-gray-400 hover:border-gray-500 transition-colors">
               Clear pins
             </button>
@@ -653,7 +1046,7 @@ export default function EventNetworkMap() {
           className="w-7 h-7 rounded bg-gray-800/80 border border-gray-600 text-gray-300 hover:bg-gray-700 flex items-center justify-center text-sm font-bold backdrop-blur-sm transition-colors">
           +
         </button>
-        <button onClick={() => fitToContent(nodes)}
+        <button onClick={() => fitToContent(simulatedNodes)}
           className="w-7 h-7 rounded bg-gray-800/80 border border-gray-600 text-gray-400 hover:bg-gray-700 flex items-center justify-center text-[10px] backdrop-blur-sm transition-colors"
           title="Fit to content">
           ⊙
@@ -689,7 +1082,7 @@ export default function EventNetworkMap() {
 
         <g transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}>
           {/* Edges */}
-          {edges.map(edge => {
+          {simulatedEdges.map(edge => {
             const s = nodeById.get(edge.sourceId);
             const t = nodeById.get(edge.targetId);
             if (!s || !t) return null;
@@ -708,7 +1101,7 @@ export default function EventNetworkMap() {
           })}
 
           {/* Nodes */}
-          {nodes.map(node => {
+          {displayNodes.map(node => {
             const isHub = node.kind !== 'event';
             const isSelected = node.id === `event:${selectedEvent?.id}`;
             const isPinned = !!node.event && pinnedIds.has(node.event.id);
@@ -748,7 +1141,7 @@ export default function EventNetworkMap() {
                   cx={node.x} cy={node.y} r={isHovered ? node.size + 2 : node.size}
                   fill={node.color}
                   opacity={dimmed ? 0.15 : isHovered ? 1 : isSelected || isPinned ? 1 : isHub ? 0.9 : 0.7}
-                  className="transition-all duration-150"
+                  className="transition-opacity duration-150"
                 />
 
                 {/* Hub count */}
@@ -765,7 +1158,8 @@ export default function EventNetworkMap() {
 
                 {/* Label */}
                 <text
-                  x={node.x} y={node.y + node.size + 13}
+                  x={node.x + (node.meta?.labelOffsetX || 0)}
+                  y={node.y + node.size + 13 + (node.meta?.labelOffsetY || 0)}
                   textAnchor="middle"
                   className="fill-gray-200 pointer-events-none"
                   opacity={dimmed ? 0.2 : 1}
@@ -900,7 +1294,7 @@ export default function EventNetworkMap() {
               </span>
             ))}
             {pinnedIds.size >= 2 && (
-              <button onClick={() => { setSelectedEvent(null); setContextData(null); setViewMode('compare'); }}
+              <button onClick={() => { setSelectedEvent(null); setContextData(null); setViewMode('compare'); setCompareMode(true); }}
                 className="px-2 py-0.5 rounded bg-purple-600/30 text-purple-300 hover:bg-purple-600/50 transition-colors">
                 Compare →
               </button>

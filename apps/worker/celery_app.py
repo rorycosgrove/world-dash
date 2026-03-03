@@ -31,9 +31,15 @@ app.conf.task_queues = (
 app.conf.task_default_queue = "default"
 app.conf.task_routes = {
     "apps.worker.tasks.llm_categorize_event_task": {"queue": "llm"},
-    # The batch scheduler runs on default queue but dispatches individual
+    "apps.worker.tasks.embed_event_task": {"queue": "llm"},
+    "apps.worker.tasks.embed_event_standalone_task": {"queue": "llm"},
+    "apps.worker.tasks.embed_chat_message_task": {"queue": "llm"},
+    "apps.worker.tasks.embed_cluster_summary_task": {"queue": "llm"},
+    # The batch schedulers run on default queue but dispatch individual
     # tasks to the llm queue.
     "apps.worker.tasks.llm_categorize_events_task": {"queue": "default"},
+    "apps.worker.tasks.backfill_embeddings_task": {"queue": "default"},
+    "apps.worker.tasks.backfill_chat_embeddings_task": {"queue": "default"},
 }
 
 # ---------- Concurrency / Prefetch ----------
@@ -60,6 +66,14 @@ app.conf.beat_schedule = {
     "llm-categorize-events": {
         "task": "apps.worker.tasks.llm_categorize_events_task",
         "schedule": 300,  # 5 min — one batch at a time
+    },
+    "backfill-embeddings": {
+        "task": "apps.worker.tasks.backfill_embeddings_task",
+        "schedule": 300,  # 5 min — backfill unembedded events
+    },
+    "backfill-chat-embeddings": {
+        "task": "apps.worker.tasks.backfill_chat_embeddings_task",
+        "schedule": 600,  # 10 min — embed unembedded chat messages
     },
 }
 

@@ -3,6 +3,7 @@
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { useDashboardStore } from '@/store/dashboard';
+import { useChatStore } from '@/store/chat';
 import clsx from 'clsx';
 import { useState } from 'react';
 
@@ -17,6 +18,7 @@ export default function NavBar() {
   const pathname = usePathname();
   const { autoRefresh, toggleAutoRefresh, unacknowledgedAlertCount, toggleDebugPanel, showDebugPanel } =
     useDashboardStore();
+  const { isOpen: chatOpen, toggleChat } = useChatStore();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
@@ -86,6 +88,20 @@ export default function NavBar() {
             title="Toggle debug panel"
           >
             🐛
+          </button>
+
+          {/* Chat toggle */}
+          <button
+            onClick={toggleChat}
+            className={clsx(
+              'flex items-center gap-1 px-2 py-1 rounded transition-colors',
+              chatOpen
+                ? 'text-blue-400 bg-blue-900/30'
+                : 'text-gray-500 hover:bg-gray-700/50'
+            )}
+            title="Toggle intelligence chat"
+          >
+            💬
           </button>
 
           <span className="hidden md:inline text-gray-600">|</span>

@@ -37,6 +37,8 @@ export default function EventFeed() {
     dateRange,
     autoRefresh,
     openDrawer,
+    pinnedEventIds,
+    togglePinEvent,
   } = useDashboardStore();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +54,22 @@ export default function EventFeed() {
         severity: filterSeverity || undefined,
         search: searchQuery || undefined,
       });
+
+      // Merge new events while preserving object identity for selectedEvent
+      const currentSelected = useDashboardStore.getState().selectedEvent;
+      if (currentSelected) {
+        const freshSelected = data.find((e: Event) => e.id === currentSelected.id);
+        if (freshSelected) {
+          // Preserve the selected event reference only if data hasn't changed
+          const idx = data.indexOf(freshSelected);
+          if (idx !== -1 && JSON.stringify(freshSelected) === JSON.stringify(currentSelected)) {
+            data[idx] = currentSelected;
+          } else if (freshSelected) {
+            // Update selected event with fresh data
+            useDashboardStore.getState().setSelectedEvent(freshSelected);
+          }
+        }
+      }
       setEvents(data);
       setError(null);
 
@@ -194,6 +212,7 @@ export default function EventFeed() {
             {displayedEvents.map((event: Event) => {
               const sig = event.llm_significance || event.severity;
               const isSelected = selectedEvent?.id === event.id;
+              const isPinned = pinnedEventIds.has(event.id);
               const categories = event.categories ?? [];
               const actors = event.actors ?? [];
 
@@ -202,6 +221,7 @@ export default function EventFeed() {
                   key={event.id}
                   className={clsx(
                     'px-3 py-2.5 border-b border-gray-800 cursor-pointer transition-colors group',
+                    isPinned && 'border-l-2 border-l-amber-500',
                     isSelected ? 'bg-accent border-l-2 border-l-purple-500' : 'hover:bg-gray-800/50'
                   )}
                   onClick={() => setSelectedEvent(isSelected ? null : event)}
@@ -211,6 +231,22 @@ export default function EventFeed() {
                   <div className="flex items-start gap-2">
                     {sig && <SeverityDot level={sig} />}
                     <h3 className="text-sm font-medium flex-1 leading-snug line-clamp-2">{event.title}</h3>
+                    {/* Pin button */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        togglePinEvent(event.id);
+                      }}
+                      className={clsx(
+                        'text-xs flex-shrink-0 transition-all',
+                        isPinned
+                          ? 'text-amber-400 hover:text-amber-300 opacity-100'
+                          : 'text-gray-600 hover:text-amber-400 opacity-0 group-hover:opacity-100'
+                      )}
+                      title={isPinned ? 'Unpin from compare' : 'Pin for compare'}
+                    >
+                      📌
+                    </button>
                     {/* Quick open drawer button */}
                     <button
                       onClick={(e) => {

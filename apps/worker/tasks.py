@@ -209,7 +209,8 @@ def llm_categorize_event_task(self, event_id: str):
                     reason="LLM returned no categories/actors/themes",
                 )
 
-            analyze_event_task.delay(event_id)
+            # Chain: LLM categorize → embed → analyze
+            embed_event_task.delay(event_id)
 
             return {
                 "success": True,
@@ -225,7 +226,7 @@ def llm_categorize_event_task(self, event_id: str):
                 raise self.retry(exc=e, countdown=15 * (self.request.retries + 1))
             except self.MaxRetriesExceededError:
                 logger.warning("llm_max_retries_exceeded", event_id=event_id)
-                analyze_event_task.delay(event_id)
+                embed_event_task.delay(event_id)
                 return {"success": False, "error": str(e)}
 
 
@@ -267,6 +268,154 @@ def llm_categorize_events_task():
     finally:
         # Release lock if we finish quickly (otherwise TTL handles it)
         _redis_client.delete(LOCK_KEY)
+
+
+# ---------------------------------------------------------------------------
+# Embedding tasks  (queue: llm — uses Ollama embedding model)
+# ---------------------------------------------------------------------------
+
+@app.task(
+    name="apps.worker.tasks.embed_event_task",
+    bind=True,
+    max_retries=2,
+    soft_time_limit=60,
+    time_limit=90,
+)
+def embed_event_task(self, event_id: str):
+    """
+    Generate and store a vector embedding for a single event.
+    Chains into analyze_event_task after completion.
+    Runs on the 'llm' queue (concurrency=1) so Ollama gets one request at a time.
+    """
+    logger.info("task_started", task="embed_event", event_id=event_id)
+
+    db_manager = get_db_manager()
+    llm = _get_llm_service()
+
+    with db_manager.get_session() as session:
+        event_repo = EventRepository(session)
+        event = event_repo.get_by_id(UUID(event_id))
+
+        if not event:
+            logger.error("event_not_found", event_id=event_id)
+            return {"success": False, "error": "Event not found"}
+
+        try:
+            embed_text = llm.build_event_embed_text(
+                title=event.title,
+                description=event.description,
+                categories=event.categories,
+                actors=event.actors,
+                themes=event.themes,
+            )
+
+            embedding = llm.embed_text_sync(embed_text)
+
+            if embedding:
+                event_repo.store_embedding(UUID(event_id), embedding)
+                session.commit()
+                logger.info("event_embedded", event_id=event_id, dims=len(embedding))
+            else:
+                logger.warning("embed_returned_none", event_id=event_id)
+
+            # Always chain to analysis regardless of embedding success
+            analyze_event_task.delay(event_id)
+
+            return {"success": True, "embedded": embedding is not None}
+
+        except Exception as e:
+            logger.error("embed_failed", event_id=event_id, error=str(e))
+            try:
+                raise self.retry(exc=e, countdown=10 * (self.request.retries + 1))
+            except self.MaxRetriesExceededError:
+                logger.warning("embed_max_retries_exceeded", event_id=event_id)
+                analyze_event_task.delay(event_id)
+                return {"success": False, "error": str(e)}
+
+
+@app.task(
+    name="apps.worker.tasks.backfill_embeddings_task",
+    soft_time_limit=300,
+    time_limit=360,
+)
+def backfill_embeddings_task():
+    """
+    Periodic batch: Find LLM-processed events without embeddings and queue them.
+    Uses a Redis lock to prevent overlapping batches.
+    """
+    LOCK_KEY = "worlddash:embed_batch_lock"
+    LOCK_TTL = 280
+    BATCH_SIZE = 10
+
+    if not _redis_client.set(LOCK_KEY, "1", nx=True, ex=LOCK_TTL):
+        logger.info("embed_batch_skipped", reason="previous batch still running")
+        return {"success": True, "queued": 0, "skipped": True}
+
+    try:
+        logger.info("task_started", task="backfill_embeddings")
+
+        db_manager = get_db_manager()
+        with db_manager.get_session() as session:
+            event_repo = EventRepository(session)
+            unembedded = event_repo.list_unembedded(limit=BATCH_SIZE)
+
+        logger.info("embed_batch_queued", count=len(unembedded))
+
+        for event in unembedded:
+            embed_event_standalone_task.delay(str(event.id))
+
+        return {"success": True, "queued": len(unembedded)}
+    finally:
+        _redis_client.delete(LOCK_KEY)
+
+
+@app.task(
+    name="apps.worker.tasks.embed_event_standalone_task",
+    bind=True,
+    max_retries=2,
+    soft_time_limit=60,
+    time_limit=90,
+)
+def embed_event_standalone_task(self, event_id: str):
+    """Embed an event without chaining to analysis (for backfill use)."""
+    logger.info("task_started", task="embed_event_standalone", event_id=event_id)
+
+    db_manager = get_db_manager()
+    llm = _get_llm_service()
+
+    with db_manager.get_session() as session:
+        event_repo = EventRepository(session)
+        event = event_repo.get_by_id(UUID(event_id))
+
+        if not event:
+            return {"success": False, "error": "Event not found"}
+
+        try:
+            embed_text = llm.build_event_embed_text(
+                title=event.title,
+                description=event.description,
+                categories=event.categories,
+                actors=event.actors,
+                themes=event.themes,
+            )
+
+            embedding = llm.embed_text_sync(embed_text)
+
+            if embedding:
+                event_repo.store_embedding(UUID(event_id), embedding)
+                session.commit()
+                logger.info("event_embedded_standalone", event_id=event_id)
+                return {"success": True, "embedded": True}
+            else:
+                logger.warning("embed_returned_none_standalone", event_id=event_id)
+                return {"success": True, "embedded": False}
+
+        except Exception as e:
+            logger.error("embed_standalone_failed", event_id=event_id, error=str(e))
+            try:
+                raise self.retry(exc=e, countdown=10 * (self.request.retries + 1))
+            except self.MaxRetriesExceededError:
+                return {"success": False, "error": str(e)}
 
 
 # ---------------------------------------------------------------------------
@@ -340,3 +489,134 @@ def process_new_events():
             normalize_event_task.delay(str(event.id))
 
     return {"success": True, "queued": len(raw_events)}
+
+
+# ---------------------------------------------------------------------------
+# Vector feedback loop  (queue: llm)
+# ---------------------------------------------------------------------------
+
+@app.task(
+    name="apps.worker.tasks.embed_chat_message_task",
+    bind=True,
+    max_retries=2,
+    soft_time_limit=60,
+    time_limit=90,
+)
+def embed_chat_message_task(self, message_id: str):
+    """Embed a chat message and store the vector for future retrieval."""
+    logger.info("embed_chat_message_started", message_id=message_id)
+
+    try:
+        llm = _get_llm_service()
+        db_manager = get_db_manager()
+
+        with db_manager.get_session() as session:
+            from packages.storage.repositories import ChatMessageRepository
+            chat_repo = ChatMessageRepository(session)
+
+            # Load message
+            from packages.storage.models import ChatMessage as ChatMessageModel
+            msg = session.query(ChatMessageModel).filter(
+                ChatMessageModel.id == UUID(message_id)
+            ).first()
+
+            if not msg:
+                logger.warning("chat_message_not_found", message_id=message_id)
+                return {"success": False, "error": "not_found"}
+
+            if msg.embedding is not None:
+                logger.info("chat_message_already_embedded", message_id=message_id)
+                return {"success": True, "already_embedded": True}
+
+            embedding = llm.embed_text_sync(msg.content)
+            if embedding:
+                chat_repo.store_embedding(UUID(message_id), embedding)
+                session.commit()
+                logger.info("chat_message_embedded", message_id=message_id)
+                return {"success": True}
+            else:
+                logger.warning("embed_chat_empty_result", message_id=message_id)
+                return {"success": False, "error": "empty_embedding"}
+
+    except Exception as e:
+        logger.error("embed_chat_message_failed", message_id=message_id, error=str(e))
+        raise self.retry(exc=e, countdown=15)
+
+
+@app.task(
+    name="apps.worker.tasks.embed_cluster_summary_task",
+    bind=True,
+    max_retries=2,
+    soft_time_limit=60,
+    time_limit=90,
+)
+def embed_cluster_summary_task(self, cluster_id: str):
+    """Embed a cluster summary/label and store as the cluster centroid."""
+    logger.info("embed_cluster_summary_started", cluster_id=cluster_id)
+
+    try:
+        llm = _get_llm_service()
+        db_manager = get_db_manager()
+
+        with db_manager.get_session() as session:
+            from packages.storage.repositories import ClusterRepository
+            cluster_repo = ClusterRepository(session)
+
+            cluster = cluster_repo.get_by_id(UUID(cluster_id))
+            if not cluster:
+                logger.warning("cluster_not_found", cluster_id=cluster_id)
+                return {"success": False, "error": "not_found"}
+
+            # Build text from label + summary + keywords
+            parts = [cluster.label]
+            if cluster.summary:
+                parts.append(cluster.summary)
+            if cluster.keywords:
+                parts.append("Keywords: " + ", ".join(cluster.keywords))
+
+            text = " | ".join(parts)
+            embedding = llm.embed_text_sync(text)
+
+            if embedding:
+                cluster_repo.update_centroid(UUID(cluster_id), embedding)
+                session.commit()
+                logger.info("cluster_summary_embedded", cluster_id=cluster_id)
+                return {"success": True}
+            else:
+                logger.warning("embed_cluster_empty_result", cluster_id=cluster_id)
+                return {"success": False, "error": "empty_embedding"}
+
+    except Exception as e:
+        logger.error("embed_cluster_summary_failed", cluster_id=cluster_id, error=str(e))
+        raise self.retry(exc=e, countdown=15)
+
+
+@app.task(
+    name="apps.worker.tasks.backfill_chat_embeddings_task",
+    soft_time_limit=120,
+    time_limit=180,
+)
+def backfill_chat_embeddings_task():
+    """Periodically embed any unembedded chat messages."""
+    lock_key = "lock:backfill_chat_embeddings"
+    if not _redis_client.set(lock_key, "1", nx=True, ex=300):
+        logger.info("backfill_chat_embeddings_skipped_lock")
+        return {"success": True, "skipped": "lock_held"}
+
+    try:
+        db_manager = get_db_manager()
+        with db_manager.get_session() as session:
+            from packages.storage.repositories import ChatMessageRepository
+            chat_repo = ChatMessageRepository(session)
+            unembedded = chat_repo.list_unembedded(limit=30)
+
+        queued = 0
+        for msg in unembedded:
+            embed_chat_message_task.delay(str(msg.id))
+            queued += 1
+
+        logger.info("backfill_chat_embeddings_done", queued=queued)
+        return {"success": True, "queued": queued}
+
+    finally:
+        _redis_client.delete(lock_key)

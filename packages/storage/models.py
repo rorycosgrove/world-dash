@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 from geoalchemy2 import Geometry
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     Column,
@@ -102,6 +103,10 @@ class Event(Base):
     llm_significance = Column(String(20), nullable=True)              # low/medium/high/critical
     llm_processed_at = Column(DateTime(timezone=True), nullable=True) # when LLM last ran
 
+    # Vector embedding (768-dim for nomic-embed-text)
+    embedding = Column(Vector(768), nullable=True)
+    embedded_at = Column(DateTime(timezone=True), nullable=True)
+
     # Timestamps
     published_at = Column(DateTime(timezone=True), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -139,3 +144,73 @@ class Alert(Base):
 
     def __repr__(self) -> str:
         return f"<Alert {self.title}>"
+
+
+class Cluster(Base):
+    """Auto-generated or user-refined topic cluster."""
+
+    __tablename__ = "clusters"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    label = Column(String(200), nullable=False)
+    summary = Column(Text, nullable=True)
+    keywords = Column(ARRAY(String), nullable=False, default=list)
+    centroid = Column(ARRAY(Float), nullable=True)  # Avg embedding for the cluster
+    auto_generated = Column(Boolean, nullable=False, default=True)
+    pinned = Column(Boolean, nullable=False, default=False)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    # Relationships
+    cluster_events = relationship("ClusterEvent", back_populates="cluster", cascade="all, delete-orphan")
+
+    def __repr__(self) -> str:
+        return f"<Cluster {self.label}>"
+
+
+class ClusterEvent(Base):
+    """Association between clusters and events."""
+
+    __tablename__ = "cluster_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cluster_id = Column(UUID(as_uuid=True), ForeignKey("clusters.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_id = Column(UUID(as_uuid=True), ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True)
+    similarity = Column(Float, nullable=True)
+    added_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Relationships
+    cluster = relationship("Cluster", back_populates="cluster_events")
+    event = relationship("Event")
+
+    def __repr__(self) -> str:
+        return f"<ClusterEvent cluster={self.cluster_id} event={self.event_id}>"
+
+
+class ChatMessage(Base):
+    """Chat messages between user and LLM."""
+
+    __tablename__ = "chat_messages"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(String(100), nullable=False, index=True)
+    role = Column(String(20), nullable=False)  # 'user' | 'assistant' | 'system'
+    content = Column(Text, nullable=False)
+    context_event_id = Column(UUID(as_uuid=True), ForeignKey("events.id"), nullable=True)
+    context_cluster_id = Column(UUID(as_uuid=True), ForeignKey("clusters.id"), nullable=True)
+    metadata_json = Column(JSONB, nullable=True)
+    embedding = Column(Vector(768), nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Relationships
+    context_event = relationship("Event", foreign_keys=[context_event_id])
+    context_cluster = relationship("Cluster", foreign_keys=[context_cluster_id])
+
+    def __repr__(self) -> str:
+        return f"<ChatMessage {self.role} {self.session_id}>"

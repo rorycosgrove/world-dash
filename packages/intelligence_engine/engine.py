@@ -5,8 +5,10 @@ Intelligence analysis engine.
 from typing import List, Optional
 from uuid import UUID
 
+import numpy as np
+
 from packages.shared.logging import get_logger
-from packages.shared.schemas import AlertCreate, EventRead, EventSeverity
+from packages.shared.schemas import AlertCreate, ClusterCreate, EventRead, EventSeverity
 
 logger = get_logger(__name__)
 
@@ -146,9 +148,8 @@ class IntelligenceEngine:
 
     def cluster_related_events(self, events: List[EventRead]) -> List[List[UUID]]:
         """
-        Cluster related events together.
-        Simple implementation based on tag similarity.
-        Can be enhanced with ML clustering later.
+        Cluster related events using tag-based Jaccard similarity.
+        Legacy fallback — prefer auto_generate_clusters for embedding-based clustering.
         """
         if not events:
             return []
@@ -188,3 +189,110 @@ class IntelligenceEngine:
 
         logger.info("event_clustering_complete", cluster_count=len(clusters))
         return clusters
+
+    def auto_generate_clusters(
+        self,
+        embeddings: List[tuple[UUID, list[float]]],
+        min_cluster_size: int = 3,
+        similarity_threshold: float = 0.65,
+    ) -> List[dict]:
+        """
+        Generate topic clusters from event embeddings using agglomerative
+        greedy clustering (no scipy/sklearn dependency).
+
+        Args:
+            embeddings: List of (event_id, embedding_vector) tuples
+            min_cluster_size: Minimum events for a cluster to be kept
+            similarity_threshold: Cosine similarity threshold for grouping
+
+        Returns:
+            List of dicts with 'event_ids' and 'centroid'
+        """
+        if len(embeddings) < min_cluster_size:
+            return []
+
+        ids = [eid for eid, _ in embeddings]
+        vecs = np.array([emb for _, emb in embeddings], dtype=np.float32)
+
+        # Normalize
+        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+        norms[norms == 0] = 1
+        vecs = vecs / norms
+
+        # Compute pairwise cosine similarity
+        sim_matrix = vecs @ vecs.T
+
+        # Greedy agglomerative clustering
+        assigned = [False] * len(ids)
+        clusters = []
+
+        # Sort events by how many neighbors they have (high-connectivity first)
+        neighbor_counts = [(i, (sim_matrix[i] >= similarity_threshold).sum()) for i in range(len(ids))]
+        neighbor_counts.sort(key=lambda x: x[1], reverse=True)
+
+        for idx, _ in neighbor_counts:
+            if assigned[idx]:
+                continue
+
+            cluster_indices = [idx]
+            assigned[idx] = True
+
+            for other_idx in range(len(ids)):
+                if assigned[other_idx]:
+                    continue
+                if sim_matrix[idx][other_idx] >= similarity_threshold:
+                    cluster_indices.append(other_idx)
+                    assigned[other_idx] = True
+
+            if len(cluster_indices) >= min_cluster_size:
+                cluster_vecs = vecs[cluster_indices]
+                centroid = cluster_vecs.mean(axis=0)
+                centroid_norm = np.linalg.norm(centroid)
+                if centroid_norm > 0:
+                    centroid = centroid / centroid_norm
+
+                clusters.append({
+                    "event_ids": [ids[i] for i in cluster_indices],
+                    "centroid": centroid.tolist(),
+                })
+
+        logger.info("auto_clusters_generated", count=len(clusters), total_events=len(ids))
+        return clusters
+
+    def generate_cluster_label(self, events: List[EventRead]) -> str:
+        """Generate a label for a cluster based on its events' metadata."""
+        from collections import Counter
+        all_categories = []
+        all_actors = []
+        all_themes = []
+        for e in events:
+            all_categories.extend(e.categories or [])
+            all_actors.extend(e.actors or [])
+            all_themes.extend(e.themes or [])
+
+        top_categories = [w for w, _ in Counter(all_categories).most_common(2)]
+        top_actors = [w for w, _ in Counter(all_actors).most_common(2)]
+        top_themes = [w for w, _ in Counter(all_themes).most_common(1)]
+
+        parts = []
+        if top_actors:
+            parts.append(" & ".join(top_actors[:2]))
+        if top_categories:
+            parts.append(", ".join(top_categories[:2]))
+        if top_themes:
+            parts.append(top_themes[0])
+
+        label = " — ".join(parts) if parts else f"Cluster ({len(events)} events)"
+        return label[:200]
+
+    def generate_cluster_keywords(self, events: List[EventRead]) -> List[str]:
+        """Extract top keywords from cluster events."""
+        from collections import Counter
+        words = []
+        for e in events:
+            words.extend(e.categories or [])
+            words.extend(e.actors or [])
+            words.extend(e.themes or [])
+            words.extend(e.tags or [])
+
+        return [w for w, _ in Counter(words).most_common(10)]

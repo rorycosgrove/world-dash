@@ -167,3 +167,148 @@ class HealthCheck(BaseSchema):
     version: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     dependencies: dict[str, str] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Cluster schemas
+# ---------------------------------------------------------------------------
+
+class ClusterBase(BaseSchema):
+    """Base cluster schema."""
+
+    label: str = Field(..., min_length=1, max_length=200)
+    summary: Optional[str] = None
+    keywords: list[str] = Field(default_factory=list)
+    auto_generated: bool = True
+    pinned: bool = False
+
+
+class ClusterCreate(ClusterBase):
+    """Schema for creating clusters."""
+
+    pass
+
+
+class ClusterRead(ClusterBase):
+    """Schema for reading clusters."""
+
+    id: UUID = Field(default_factory=uuid4)
+    event_count: int = Field(default=0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ClusterEventRead(BaseSchema):
+    """Schema for cluster-event association."""
+
+    event_id: UUID
+    similarity: Optional[float] = None
+    added_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ClusterDetail(ClusterRead):
+    """Cluster with its events."""
+
+    events: list[EventRead] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Chat schemas
+# ---------------------------------------------------------------------------
+
+class ChatMessageBase(BaseSchema):
+    """Base chat message schema."""
+
+    content: str = Field(..., min_length=1)
+    context_event_id: Optional[UUID] = None
+    context_cluster_id: Optional[UUID] = None
+
+
+class ChatMessageCreate(ChatMessageBase):
+    """Schema for creating chat messages (user input)."""
+
+    session_id: Optional[str] = None  # Auto-generated if not provided
+
+
+class ChatMessageRead(BaseSchema):
+    """Schema for reading chat messages."""
+
+    id: UUID = Field(default_factory=uuid4)
+    session_id: str
+    role: str
+    content: str
+    context_event_id: Optional[UUID] = None
+    context_cluster_id: Optional[UUID] = None
+    metadata_json: Optional[dict] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ChatSessionRead(BaseSchema):
+    """Schema for chat session summary."""
+
+    session_id: str
+    message_count: int
+    first_message_at: datetime
+    last_message_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Visualization command schemas
+# ---------------------------------------------------------------------------
+
+class VisualizationType(str, Enum):
+    """Types of visualization the LLM can request."""
+
+    NETWORK = "network"
+    TIMELINE = "timeline"
+    CHART = "chart"
+    FILTER = "filter"
+    MAP = "map"
+    COMPARE = "compare"
+
+
+class ChartAxis(BaseSchema):
+    """Axis definition for a chart."""
+
+    field: str = Field(..., description="Data field name")
+    label: str = Field(default="", description="Human-readable axis label")
+
+
+class ChartDataPoint(BaseSchema):
+    """Single data point in a chart series."""
+
+    x: str = Field(..., description="X-axis value (label or date string)")
+    y: float = Field(default=0, description="Y-axis numeric value")
+    label: Optional[str] = Field(None, description="Optional tooltip label")
+
+
+class ChartSeries(BaseSchema):
+    """A named data series for a chart."""
+
+    name: str = Field(default="", description="Series name")
+    data: list[ChartDataPoint] = Field(default_factory=list, description="Data points")
+
+
+class ChartSpec(BaseSchema):
+    """Structured chart specification rendered inline in the chat panel."""
+
+    chart_type: str = Field(
+        default="bar",
+        description="One of: bar, line, area, pie, radar",
+    )
+    title: str = Field(default="", description="Chart title")
+    x_axis: Optional[ChartAxis] = Field(None, description="X-axis config")
+    y_axis: Optional[ChartAxis] = Field(None, description="Y-axis config")
+    series: list[ChartSeries] = Field(default_factory=list, description="Data series")
+    color_scheme: Optional[str] = Field(None, description="Optional color scheme name")
+
+
+class VisualizationCommand(BaseSchema):
+    """A structured visualization command returned by the LLM."""
+
+    type: VisualizationType = Field(..., description="Visualization type")
+    event_ids: list[str] = Field(default_factory=list, description="Event IDs to visualize")
+    title: str = Field(default="", description="Title for the visualization")
+    chart_spec: Optional[ChartSpec] = Field(None, description="Structured chart configuration for inline rendering")
+    filter_spec: Optional[dict] = Field(None, description="Optional filter overrides (severity, category, date_range)")
+    description: Optional[str] = Field(None, description="Description of applied visualization")

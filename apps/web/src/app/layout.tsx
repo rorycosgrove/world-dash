@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import '@/styles/globals.css';
 import NavBar from '@/components/NavBar';
+import ChatPanelWrapper from '@/components/ChatPanelWrapper';
 import { Toaster } from 'react-hot-toast';
 import ErrorBoundaryWrapper from '@/components/ErrorBoundary';
 
@@ -21,6 +22,7 @@ export default function RootLayout({
         <ErrorBoundaryWrapper>
           {children}
         </ErrorBoundaryWrapper>
+        <ChatPanelWrapper />
         <Toaster
           position="bottom-right"
           toastOptions={{
