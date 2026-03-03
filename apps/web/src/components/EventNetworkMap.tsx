@@ -361,7 +361,18 @@ function resolveOverlaps(
 // Component
 // ---------------------------------------------------------------------------
 export default function EventNetworkMap() {
-  const { events, selectedEvent, setSelectedEvent, pinnedEventIds, togglePinEvent, clearPins, compareMode, setCompareMode } = useDashboardStore();
+  const { events, selectedEvent, setSelectedEvent, pinnedEventIds, togglePinEvent, clearPins, compareMode, setCompareMode, timelineRange } = useDashboardStore();
+
+  // Filter events by timeline range
+  const filteredEvents = useMemo(() => {
+    if (!timelineRange) return events;
+    const s = new Date(timelineRange.start).getTime();
+    const e = new Date(timelineRange.end).getTime();
+    return events.filter((ev) => {
+      const t = new Date(ev.published_at).getTime();
+      return t >= s && t <= e;
+    });
+  }, [events, timelineRange]);
 
   // --- View state ---
   const [viewMode, setViewMode] = useState<ViewMode>('overview');
@@ -754,7 +765,7 @@ export default function EventNetworkMap() {
 
     const groups = new Map<string, Event[]>();
     const ungrouped: Event[] = [];
-    events.forEach((event: Event) => {
+    filteredEvents.forEach((event: Event) => {
       const vals = getGroupValues(event, groupBy);
       if (vals.length === 0) ungrouped.push(event);
       else vals.forEach((v: string) => {
@@ -839,7 +850,7 @@ export default function EventNetworkMap() {
     }
 
     return { nodes, edges };
-  }, [size, viewMode, groupBy, selectedEvent, contextData, events, pinnedIds, expandedHubs]);
+  }, [size, viewMode, groupBy, selectedEvent, contextData, filteredEvents, events, pinnedIds, expandedHubs]);
 
   // ===================================================================
   // FORCE SIMULATION + LABEL COLLISION RESOLUTION
@@ -1015,7 +1026,7 @@ export default function EventNetworkMap() {
             ? selectedEvent.title.slice(0, 55)
             : viewMode === 'compare'
               ? 'Shared attributes highlighted · Ctrl+click to pin/unpin'
-              : `${events.length} events · Scroll to zoom · Drag canvas to pan · Drag nodes to move`}
+              : `${filteredEvents.length} events${timelineRange ? ' in range' : ''} · Scroll to zoom · Drag canvas to pan · Drag nodes to move`}
         </p>
 
         {/* Group-by buttons (overview) */}

@@ -166,7 +166,7 @@ function SessionList({
   );
 }
 
-export default function ChatPanel() {
+export default function ChatPanel({ inline }: { inline?: boolean } = {}) {
   const {
     isOpen,
     closeChat,
@@ -331,15 +331,23 @@ export default function ChatPanel() {
     }
   }, [pinEvents, setCompareMode, setFilterSeverity, setFilterCategory, setDateRange, setDashViewMode, setActiveChartSpec]);
 
-  if (!isOpen) return null;
+  if (!inline && !isOpen) return null;
 
   return (
-    <div className="fixed inset-y-0 right-0 w-96 max-w-full bg-gray-800 border-l border-gray-700 shadow-2xl z-50 flex flex-col">
+    <div className={clsx(
+      'flex flex-col',
+      inline
+        ? 'h-full bg-primary'
+        : 'fixed inset-y-0 right-0 w-96 max-w-full bg-gray-800 border-l border-gray-700 shadow-2xl z-50'
+    )}>
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-700 bg-gray-800/95 backdrop-blur-sm flex-shrink-0">
+      <div className={clsx(
+        'flex items-center justify-between px-4 py-2.5 border-b border-gray-700 backdrop-blur-sm flex-shrink-0',
+        inline ? 'bg-primary/95 px-3 py-2' : 'bg-gray-800/95'
+      )}>
         <div className="flex items-center gap-2">
           <span className="text-sm">💬</span>
-          <span className="text-sm font-medium text-gray-200">Intelligence Chat</span>
+          <span className={clsx('font-medium text-gray-200', inline ? 'text-xs' : 'text-sm')}>Intelligence Chat</span>
           {sessionId && (
             <span className="text-[10px] text-gray-500 font-mono">
               {sessionId.slice(0, 8)}
@@ -361,13 +369,15 @@ export default function ChatPanel() {
           >
             <span className="text-xs">➕</span>
           </button>
-          <button
-            onClick={closeChat}
-            className="text-gray-400 hover:text-gray-200 p-1 rounded hover:bg-gray-700/50 transition-colors"
-            title="Close chat"
-          >
-            <span className="text-xs">✕</span>
-          </button>
+          {!inline && (
+            <button
+              onClick={closeChat}
+              className="text-gray-400 hover:text-gray-200 p-1 rounded hover:bg-gray-700/50 transition-colors"
+              title="Close chat"
+            >
+              <span className="text-xs">✕</span>
+            </button>
+          )}
         </div>
       </div>
 

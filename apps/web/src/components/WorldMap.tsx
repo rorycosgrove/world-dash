@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import Map, { Marker, Popup } from 'react-map-gl';
 import { Event } from '@/lib/api';
 import { useDashboardStore } from '@/store/dashboard';
@@ -15,7 +15,7 @@ const severityColors: Record<string, string> = {
 };
 
 export default function WorldMap() {
-  const { events, selectedEvent, setSelectedEvent, openDrawer } = useDashboardStore();
+  const { events, selectedEvent, setSelectedEvent, openDrawer, timelineRange } = useDashboardStore();
   const [mapboxToken, setMapboxToken] = useState<string>('');
   const [viewState, setViewState] = useState({
     longitude: 0,
@@ -30,7 +30,18 @@ export default function WorldMap() {
     setMapboxToken(envToken || storedToken);
   }, []);
 
-  const eventsWithLocation = events.filter((e) => e.location !== null);
+  // Filter events by timeline range
+  const filteredEvents = useMemo(() => {
+    if (!timelineRange) return events;
+    const s = new Date(timelineRange.start).getTime();
+    const e = new Date(timelineRange.end).getTime();
+    return events.filter((ev) => {
+      const t = new Date(ev.published_at).getTime();
+      return t >= s && t <= e;
+    });
+  }, [events, timelineRange]);
+
+  const eventsWithLocation = filteredEvents.filter((e) => e.location !== null);
 
   // No token configured
   if (!mapboxToken) {
