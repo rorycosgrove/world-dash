@@ -178,7 +178,7 @@ uv run pytest
 uv run pytest --cov=packages --cov-report=html
 
 # Run specific test file
-uv run pytest tests/test_storage.py -v
+uv run pytest tests/utests/test_normalizer.py -v
 
 # Run with markers
 uv run pytest -m "not slow"
@@ -448,6 +448,14 @@ npm run build
 - **Workers**: Increase `worker` concurrency for more throughput; keep `llm-worker` at concurrency=1
 - **API**: Use async endpoints for I/O-bound operations; leverage Redis caching
 - **Frontend**: The EventNetworkMap uses `ResizeObserver` and fits to container — avoid unnecessary re-renders
+
+---
+
+## Security Notes
+
+- **API authentication**: Set `API_SECRET_KEY` in `.env` to enable `X-API-Key` header authentication. When empty, auth is disabled (development mode).
+- **CORS**: Set `ALLOWED_ORIGINS` in `.env` to a comma-separated list of allowed origins. Defaults to `http://localhost:3000`.
+- **Rate limiting**: The API does not currently implement rate limiting. For public-facing deployments, add `slowapi` or a reverse-proxy rate limiter (nginx, Cloudflare, etc.) to protect LLM and database resources.
 
 ---
 

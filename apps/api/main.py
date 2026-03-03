@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from prometheus_client import Counter, Histogram, generate_latest
@@ -35,6 +35,65 @@ from packages.shared.schemas import (
 from packages.storage.database import get_db_session
 
 __version__ = "0.1.0"
+
+
+# ---------------------------------------------------------------------------
+# Encryption helpers for Redis-stored secrets
+# ---------------------------------------------------------------------------
+
+def _get_fernet():
+    """Return a Fernet instance if ENCRYPTION_KEY is set, else None."""
+    key = settings.api.encryption_key
+    if not key:
+        return None
+    try:
+        from cryptography.fernet import Fernet
+        return Fernet(key.encode() if isinstance(key, str) else key)
+    except Exception:
+        return None
+
+
+def _encrypt(value: str) -> str:
+    """Encrypt a value with Fernet if available, else return as-is."""
+    f = _get_fernet()
+    if f and value:
+        return f.encrypt(value.encode()).decode()
+    return value
+
+
+def _decrypt(value: str) -> str:
+    """Decrypt a value with Fernet if available, else return as-is."""
+    f = _get_fernet()
+    if f and value:
+        try:
+            return f.decrypt(value.encode()).decode()
+        except Exception:
+            return value  # not encrypted or wrong key — return as-is
+    return value
+
+
+# ---------------------------------------------------------------------------
+# API Key authentication
+# ---------------------------------------------------------------------------
+
+async def verify_api_key(
+    request: "Request",  # noqa: F821 — imported at module level via Starlette
+):
+    """
+    Optional API-key gate.  If API_SECRET_KEY is empty the check is skipped
+    (development mode).  Health and metrics endpoints are always public.
+    """
+    secret = settings.api.secret_key
+    if not secret:
+        return  # auth disabled
+
+    # Always allow health/metrics without auth
+    if request.url.path in ("/health", "/metrics", "/docs", "/openapi.json", "/redoc"):
+        return
+
+    provided = request.headers.get("X-API-Key", "")
+    if provided != secret:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 # Metrics
 REQUEST_COUNT = Counter("api_requests_total", "Total API requests", ["method", "endpoint", "status"])
@@ -88,12 +147,18 @@ app = FastAPI(
     description="Geopolitical Intelligence Dashboard API",
     version=__version__,
     lifespan=lifespan,
+    dependencies=[Depends(verify_api_key)],
 )
 
-# CORS
+# CORS — use ALLOWED_ORIGINS from env (comma-separated), default to localhost:3000
+_allowed_origins = [
+    o.strip()
+    for o in settings.api.allowed_origins.split(",")
+    if o.strip()
+] or ["http://localhost:3000"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -355,6 +420,7 @@ async def list_events(
     severity: Optional[EventSeverity] = Query(default=None),
     since_hours: Optional[int] = Query(default=None, description="Events from last N hours"),
     search: Optional[str] = Query(default=None, description="Text search in title and description"),
+    category: Optional[str] = Query(default=None, description="Filter by category (server-side)"),
     session: Session = Depends(get_db_session),
 ):
     """List events with filters."""
@@ -373,6 +439,7 @@ async def list_events(
         severity=severity,
         since=since,
         search=search,
+        category=category,
     )
 
     return events
@@ -1244,7 +1311,11 @@ Respond as the intelligence analyst assistant. Reference specific events and dat
                     tool_results_parts = []
                     for tc in result["tool_calls"]:
                         logger.info("cloud_tool_call", tool=tc["name"], args=tc.get("arguments"))
-                        tr = await execute_tool(tc["name"], tc.get("arguments", {}), session, llm)
+                        try:
+                            tr = await execute_tool(tc["name"], tc.get("arguments", {}), session, llm)
+                        except Exception as tool_err:
+                            logger.error("cloud_tool_call_failed", tool=tc["name"], error=str(tool_err))
+                            tr = {"success": False, "error": f"Tool '{tc['name']}' failed: {tool_err}"}
                         # Collect events from tool results for context_events
                         if tr.get("success") and tr.get("data"):
                             data = tr["data"]
@@ -1296,7 +1367,11 @@ Respond as the intelligence analyst assistant. Reference specific events and dat
                         tool_args = tool_data.get("args", {})
                         logger.info("ollama_tool_call", tool=tool_name, args=tool_args)
 
-                        tr = await execute_tool(tool_name, tool_args, session, llm)
+                        try:
+                            tr = await execute_tool(tool_name, tool_args, session, llm)
+                        except Exception as tool_err:
+                            logger.error("ollama_tool_call_failed", tool=tool_name, error=str(tool_err))
+                            tr = {"success": False, "error": f"Tool '{tool_name}' failed: {tool_err}"}
 
                         # Collect events
                         if tr.get("success") and tr.get("data"):
@@ -1474,6 +1549,11 @@ async def update_cloud_ai_config(body: CloudAIConfigUpdate):
 
         # Merge updates
         updates = body.model_dump(exclude_unset=True)
+
+        # Encrypt the API key before storing
+        if "api_key" in updates and updates["api_key"]:
+            updates["api_key"] = _encrypt(updates["api_key"])
+
         existing.update(updates)
 
         r.set(_CLOUD_AI_REDIS_KEY, json.dumps(existing))

@@ -129,6 +129,8 @@ def normalize_event_task(event_id: str):
                 severity=enriched_data.get("severity"),
                 risk_score=enriched_data.get("risk_score"),
             )
+            # Mark as NORMALIZED before chaining to LLM
+            event_repo.update_status(UUID(event_id), EventStatus.NORMALIZED)
             session.commit()
             logger.info("event_normalized", event_id=event_id)
 
@@ -241,8 +243,8 @@ def llm_categorize_events_task():
     Uses a Redis lock to prevent overlapping batches.
     """
     LOCK_KEY = "worlddash:llm_batch_lock"
-    LOCK_TTL = 280  # just under beat interval (300s)
-    BATCH_SIZE = 5
+    LOCK_TTL = 110  # just under beat interval (120s)
+    BATCH_SIZE = 20
 
     # Distributed lock — skip if a previous batch is still running
     if not _redis_client.set(LOCK_KEY, "1", nx=True, ex=LOCK_TTL):

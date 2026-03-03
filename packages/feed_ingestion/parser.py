@@ -64,12 +64,14 @@ class FeedParser:
             follow_redirects=True,
         )
 
-    def parse(self, source: SourceRead) -> List[FeedEntry]:
+    def parse(self, source: SourceRead, auth_header: str = None, auth_token: str = None) -> List[FeedEntry]:
         """
         Parse feed from source.
 
         Args:
             source: Source configuration
+            auth_header: Optional HTTP header name for authentication (e.g. "Authorization")
+            auth_token: Optional token value for the auth header (e.g. "Bearer sk-...")
 
         Returns:
             List of parsed feed entries
@@ -81,8 +83,13 @@ class FeedParser:
         logger.info("parsing_feed", source_id=str(source.id), url=source.url)
 
         try:
+            # Build request headers, including auth if provided
+            headers = {}
+            if auth_header and auth_token:
+                headers[auth_header] = auth_token
+
             # Fetch feed
-            response = self.client.get(source.url)
+            response = self.client.get(source.url, headers=headers)
             response.raise_for_status()
 
             # Parse with feedparser

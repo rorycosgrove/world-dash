@@ -21,6 +21,7 @@ from packages.storage.database import DatabaseManager
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID as PG_UUID
 from sqlalchemy.ext.compiler import compiles
 from geoalchemy2 import Geometry
+from pgvector.sqlalchemy import Vector
 
 
 @compiles(PG_UUID, "sqlite")
@@ -44,6 +45,12 @@ def compile_jsonb_sqlite(type_, compiler, **kw):
 @compiles(Geometry, "sqlite")
 def compile_geometry_sqlite(type_, compiler, **kw):
     """Store Geometry as TEXT on SQLite (WKT representation)."""
+    return "TEXT"
+
+
+@compiles(Vector, "sqlite")
+def compile_vector_sqlite(type_, compiler, **kw):
+    """Store pgvector Vector as TEXT on SQLite."""
     return "TEXT"
 
 

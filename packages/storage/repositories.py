@@ -109,6 +109,7 @@ class SourceRepository:
             last_error=source.last_error,
             error_count=source.error_count,
             total_events=source.total_events,
+            has_auth=bool(source.auth_header and source.auth_token),
             created_at=source.created_at,
             updated_at=source.updated_at,
         )
@@ -154,6 +155,7 @@ class EventRepository:
         severity: Optional[EventSeverity] = None,
         since: Optional[datetime] = None,
         search: Optional[str] = None,
+        category: Optional[str] = None,
     ) -> List[EventRead]:
         """List recent events with filters."""
         query = self.session.query(Event)
@@ -169,6 +171,9 @@ class EventRepository:
             query = query.filter(
                 Event.title.ilike(term) | Event.description.ilike(term)
             )
+        if category:
+            # PostgreSQL ARRAY contains operator
+            query = query.filter(Event.categories.any(category))
 
         events = query.order_by(desc(Event.published_at)).limit(limit).offset(offset).all()
         return [self._to_schema(e) for e in events]

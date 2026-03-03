@@ -169,9 +169,12 @@ world-dash/
 │       └── 002_add_llm_columns.py
 ├── tests/                    # Pytest test suite
 │   ├── conftest.py           # Fixtures + SQLite shims
-│   ├── test_storage.py
-│   ├── test_normalizer.py
-│   └── test_intelligence.py
+│   ├── itests/
+│   │   └── test_storage.py
+│   ├── utests/
+│   │   ├── test_normalizer.py
+│   │   └── test_intelligence.py
+│   └── ptests/               # Performance tests (placeholder)
 ├── scripts/
 │   ├── seed.py               # Seed 15 RSS sources
 │   ├── trigger-ingestion.ps1 # Manual ingestion trigger (Windows)

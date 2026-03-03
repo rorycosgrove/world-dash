@@ -162,7 +162,7 @@ web (Zustand store)
 | url | String | Original article URL |
 | content_hash | String (unique) | SHA-256 for deduplication |
 | raw_content | Text | Original feed content |
-| status | Enum | new, processing, processed, error |
+| status | Enum | raw, normalized, enriched, processed, failed |
 | severity | Enum | low, medium, high, critical |
 | risk_score | Float | 0.0–1.0 heuristic score |
 | tags | String[] | Auto-assigned tags |
@@ -223,21 +223,25 @@ web (Zustand store)
 
 ### Docker Services
 
-All services are defined in `docker-compose.yml` at the project root. Dockerfiles live in `infra/`.
+All services are defined in `docker/docker-compose.yml` with a local override in `docker/docker-compose.local.yml`. Dockerfiles live at the project root.
 
 | Dockerfile | Service | Base |
 |-----------|---------|------|
-| `infra/Dockerfile.api` | api | python:3.12-slim |
-| `infra/Dockerfile.worker` | worker | python:3.12-slim |
-| `infra/Dockerfile.llm-worker` | llm-worker | python:3.12-slim |
-| `infra/Dockerfile.beat` | beat | python:3.12-slim |
-| `infra/Dockerfile.web` | web | node:20 |
+| `Dockerfile.api` | api | python:3.12-slim |
+| `Dockerfile.worker` | worker | python:3.12-slim |
+| `Dockerfile.llm-worker` | llm-worker | python:3.12-slim |
+| `Dockerfile.beat` | beat | python:3.12-slim |
+| `Dockerfile.web` | web | node:20 |
+| `Dockerfile.postgres` | postgres | pgvector/pgvector:pg16 + PostGIS |
 
 ### Database Migrations
 
 Managed by Alembic with version scripts in `alembic/versions/`:
 - `001_initial_schema.py` — Sources, Events, Alerts tables with PostGIS
 - `002_add_llm_columns.py` — categories, actors, themes, llm_significance, llm_processed_at
+- `003_add_source_auth.py` — auth_header and auth_token on sources
+- `004_add_pgvector_embeddings.py` — pgvector extension and embedding columns on events
+- `005_add_clusters_and_chat.py` — clusters, cluster_events, chat_messages tables
 
 ### Volumes
 

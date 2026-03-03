@@ -39,10 +39,30 @@ def get_cloud_ai_config() -> dict:
         r = _get_redis()
         raw = r.get(_CLOUD_AI_REDIS_KEY)
         if raw:
-            return json.loads(raw)
+            data = json.loads(raw)
+            # Decrypt the API key if an encryption key is configured
+            if data.get("api_key"):
+                data["api_key"] = _decrypt_api_key(data["api_key"])
+            return data
     except Exception as e:
         logger.warning("cloud_ai_config_read_failed", error=str(e))
     return {"provider": "openai", "api_key": "", "model": "gpt-4o-mini", "endpoint": "", "enabled": False}
+
+
+def _decrypt_api_key(value: str) -> str:
+    """Decrypt a Fernet-encrypted API key.  Falls back to returning the raw
+    value if no ENCRYPTION_KEY is set or decryption fails (e.g. key was stored
+    before encryption was enabled)."""
+    settings = get_settings()
+    key = settings.api.encryption_key
+    if not key:
+        return value
+    try:
+        from cryptography.fernet import Fernet
+        f = Fernet(key.encode() if isinstance(key, str) else key)
+        return f.decrypt(value.encode()).decode()
+    except Exception:
+        return value
 
 
 def is_cloud_ai_enabled() -> bool:

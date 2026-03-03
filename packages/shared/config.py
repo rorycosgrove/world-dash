@@ -66,6 +66,9 @@ class APISettings(BaseSettings):
     workers: int = Field(default=4, alias="API_WORKERS")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     reload: bool = Field(default=False, alias="API_RELOAD")
+    secret_key: str = Field(default="", alias="API_SECRET_KEY")
+    allowed_origins: str = Field(default="http://localhost:3000", alias="ALLOWED_ORIGINS")
+    encryption_key: str = Field(default="", alias="ENCRYPTION_KEY")
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -97,8 +100,9 @@ class OllamaSettings(BaseSettings):
     """Ollama / LLM configuration."""
 
     endpoint: str = Field(default="http://localhost:11434", alias="OLLAMA_ENDPOINT")
-    model: str = Field(default="llama2", alias="OLLAMA_MODEL")
+    model: str = Field(default="llama3.2", alias="OLLAMA_MODEL")
     embedding_model: str = Field(default="nomic-embed-text", alias="OLLAMA_EMBEDDING_MODEL")
+    embedding_dim: int = Field(default=768, alias="OLLAMA_EMBEDDING_DIM")
     timeout_seconds: int = Field(default=60, alias="OLLAMA_TIMEOUT_SECONDS")
     enabled: bool = Field(default=True, alias="OLLAMA_ENABLED")
 

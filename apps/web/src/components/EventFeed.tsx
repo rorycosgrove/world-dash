@@ -53,6 +53,7 @@ export default function EventFeed() {
         since_hours: sinceHours,
         severity: filterSeverity || undefined,
         search: searchQuery || undefined,
+        category: filterCategory || undefined,
       });
 
       // Merge new events while preserving object identity for selectedEvent
@@ -88,7 +89,7 @@ export default function EventFeed() {
     } finally {
       setIsLoading(false);
     }
-  }, [filterSeverity, searchQuery, dateRange, setEvents]);
+  }, [filterSeverity, filterCategory, searchQuery, dateRange, setEvents]);
 
   useEffect(() => {
     fetchEvents();
