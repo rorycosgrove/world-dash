@@ -65,11 +65,11 @@ app.conf.beat_schedule = {
     },
     "llm-categorize-events": {
         "task": "apps.worker.tasks.llm_categorize_events_task",
-        "schedule": 300,  # 5 min — one batch at a time
+        "schedule": 120,  # 2 min — increased throughput
     },
     "backfill-embeddings": {
         "task": "apps.worker.tasks.backfill_embeddings_task",
-        "schedule": 300,  # 5 min — backfill unembedded events
+        "schedule": 120,  # 2 min — backfill unembedded events
     },
     "backfill-chat-embeddings": {
         "task": "apps.worker.tasks.backfill_chat_embeddings_task",

@@ -57,7 +57,7 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       OLLAMA_ENDPOINT: ${OLLAMA_ENDPOINT:-http://host.docker.internal:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama2}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
       OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-60}
       OLLAMA_ENABLED: ${OLLAMA_ENABLED:-true}
     ports:
@@ -91,7 +91,7 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       OLLAMA_ENDPOINT: ${OLLAMA_ENDPOINT:-http://host.docker.internal:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama2}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
       OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-60}
       OLLAMA_ENABLED: ${OLLAMA_ENABLED:-true}
     depends_on:
@@ -121,7 +121,7 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       OLLAMA_ENDPOINT: ${OLLAMA_ENDPOINT:-http://host.docker.internal:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama2}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
       OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-120}
       OLLAMA_ENABLED: ${OLLAMA_ENABLED:-true}
     depends_on:
@@ -153,7 +153,7 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       FEED_POLL_INTERVAL_SECONDS: ${FEED_POLL_INTERVAL_SECONDS:-300}
       OLLAMA_ENDPOINT: ${OLLAMA_ENDPOINT:-http://host.docker.internal:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama2}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
       OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-60}
       OLLAMA_ENABLED: ${OLLAMA_ENABLED:-true}
     depends_on:

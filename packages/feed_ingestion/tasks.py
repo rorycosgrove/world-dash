@@ -7,6 +7,7 @@ from uuid import UUID
 from packages.shared.logging import get_logger
 from packages.storage.database import get_db_manager
 from packages.storage.repositories import EventRepository, SourceRepository
+from packages.storage.models import Source as SourceModel
 
 from .parser import FeedParser
 
@@ -41,9 +42,14 @@ def ingest_source(source_id: UUID) -> dict:
                 logger.info("source_disabled", source_id=str(source_id))
                 return {"success": True, "new_events": 0, "duplicates": 0, "skipped": True}
 
+            # Retrieve auth credentials from the raw model (not exposed in SourceRead)
+            raw_source = session.query(SourceModel).filter(SourceModel.id == source_id).first()
+            auth_header = raw_source.auth_header if raw_source else None
+            auth_token = raw_source.auth_token if raw_source else None
+
             # Parse feed
             try:
-                entries = parser.parse(source)
+                entries = parser.parse(source, auth_header=auth_header, auth_token=auth_token)
             except Exception as e:
                 error_msg = str(e)
                 logger.error("source_parse_failed", source_id=str(source_id), error=error_msg)

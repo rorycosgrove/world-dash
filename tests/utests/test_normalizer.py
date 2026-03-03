@@ -3,14 +3,43 @@ Tests for event normalizer.
 """
 
 from datetime import datetime
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from packages.event_normalizer.normalizer import EventNormalizer
 from packages.shared.schemas import EventRead, EventStatus
 
 
-def test_normalize_event_with_military_keywords():
+def _make_mock_geocoder():
+    """Create a mock geocoder that returns predictable results."""
+    mock_geocoder = MagicMock()
+
+    def geocode_side_effect(country, timeout=5):
+        # Return realistic lat/lon for known countries
+        coords = {
+            "Russia": (61.524, 105.3188),
+            "China": (35.8617, 104.1954),
+            "United States": (37.0902, -95.7129),
+            "Ukraine": (48.3794, 31.1656),
+            "Iran": (32.4279, 53.6880),
+            "North Korea": (40.3399, 127.5101),
+            "Israel": (31.0461, 34.8516),
+        }
+        if country in coords:
+            loc = MagicMock()
+            loc.latitude = coords[country][0]
+            loc.longitude = coords[country][1]
+            return loc
+        return None
+
+    mock_geocoder.geocode = MagicMock(side_effect=geocode_side_effect)
+    return mock_geocoder
+
+
+@patch("packages.event_normalizer.normalizer.Nominatim")
+def test_normalize_event_with_military_keywords(mock_nominatim_cls):
     """Test normalization detects military keywords."""
+    mock_nominatim_cls.return_value = _make_mock_geocoder()
     normalizer = EventNormalizer()
 
     event = EventRead(
@@ -34,8 +63,10 @@ def test_normalize_event_with_military_keywords():
     assert result["severity"] is not None
 
 
-def test_normalize_event_with_location():
+@patch("packages.event_normalizer.normalizer.Nominatim")
+def test_normalize_event_with_location(mock_nominatim_cls):
     """Test location extraction."""
+    mock_nominatim_cls.return_value = _make_mock_geocoder()
     normalizer = EventNormalizer()
 
     event = EventRead(
@@ -58,8 +89,10 @@ def test_normalize_event_with_location():
     assert result["location"].country == "Russia"
 
 
-def test_risk_score_calculation():
+@patch("packages.event_normalizer.normalizer.Nominatim")
+def test_risk_score_calculation(mock_nominatim_cls):
     """Test risk score calculation."""
+    mock_nominatim_cls.return_value = _make_mock_geocoder()
     normalizer = EventNormalizer()
 
     event = EventRead(
