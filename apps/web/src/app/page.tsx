@@ -10,6 +10,7 @@ import EventDetailDrawer from '@/components/EventDetailDrawer';
 import ChatPanel from '@/components/ChatPanel';
 import { useDashboardStore } from '@/store/dashboard';
 import { useKeyboardShortcuts } from '@/lib/useKeyboardShortcuts';
+import { useEventLoader } from '@/lib/useEventLoader';
 import clsx from 'clsx';
 
 // Dynamic imports to avoid SSR issues
@@ -50,6 +51,7 @@ export default function Home() {
   } = useDashboardStore();
 
   useKeyboardShortcuts();
+  useEventLoader();
 
   const hasPins = pinnedEventIds.size > 0;
 
