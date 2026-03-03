@@ -388,6 +388,17 @@ export default function EventNetworkMap() {
   // --- Hover ---
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
 
+  // --- Drag state ---
+  const dragStartRef = useRef<{ nodeId: string; offsetX: number; offsetY: number } | null>(null);
+  const dragOverrides = useRef<Map<string, { x: number; y: number }>>(new Map());
+
+  // --- Expanded subgroups ---
+  const [expandedHubs, setExpandedHubs] = useState<Set<string>>(new Set());
+
+  // --- Animation refs (declared early so drag handler can access) ---
+  const animPositions = useRef<Map<string, { x: number; y: number; vx: number; vy: number }>>(new Map());
+  const [, triggerRender] = useState(0);
+
   // ===================================================================
   // EFFECTS
   // ===================================================================
@@ -407,6 +418,8 @@ export default function EventNetworkMap() {
   // Reset transform on mode / groupBy change
   useEffect(() => {
     setTransform({ x: 0, y: 0, k: 1 });
+    setExpandedHubs(new Set());
+    dragOverrides.current.clear();
   }, [viewMode, groupBy]);
 
   // Auto-switch out of compare mode when pins are cleared
@@ -517,7 +530,48 @@ export default function EventNetworkMap() {
     panStart.current = { x: e.clientX, y: e.clientY, tx: t.x, ty: t.y };
   }, []);
 
+  // Node drag start — called from node <g> onMouseDown
+  const handleNodeDragStart = useCallback((e: React.MouseEvent, nodeId: string, nodeX: number, nodeY: number) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const t = transformRef.current;
+    const graphX = (e.clientX - rect.left - t.x) / t.k;
+    const graphY = (e.clientY - rect.top - t.y) / t.k;
+    dragStartRef.current = { nodeId, offsetX: nodeX - graphX, offsetY: nodeY - graphY };
+    didPan.current = false;
+  }, []);
+
   const handleMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    // Handle node drag
+    if (dragStartRef.current) {
+      const svg = svgRef.current;
+      if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+      const t = transformRef.current;
+      const graphX = (e.clientX - rect.left - t.x) / t.k;
+      const graphY = (e.clientY - rect.top - t.y) / t.k;
+      const newX = graphX + dragStartRef.current.offsetX;
+      const newY = graphY + dragStartRef.current.offsetY;
+
+      // Update animated position directly for instant response
+      const state = animPositions.current.get(dragStartRef.current.nodeId);
+      if (state) {
+        state.x = newX;
+        state.y = newY;
+        state.vx = 0;
+        state.vy = 0;
+      }
+      // Store override so animation doesn't snap back
+      dragOverrides.current.set(dragStartRef.current.nodeId, { x: newX, y: newY });
+      didPan.current = true;
+      triggerRender((c: number) => c + 1);
+      return;
+    }
+
+    // Handle canvas pan
     if (!isPanning) return;
     const dx = e.clientX - panStart.current.x;
     const dy = e.clientY - panStart.current.y;
@@ -525,7 +579,12 @@ export default function EventNetworkMap() {
     setTransform(prev => ({ ...prev, x: panStart.current.tx + dx, y: panStart.current.ty + dy }));
   }, [isPanning]);
 
-  const handleMouseUp = useCallback(() => { setIsPanning(false); }, []);
+  const handleMouseUp = useCallback(() => {
+    if (dragStartRef.current) {
+      dragStartRef.current = null;
+    }
+    setIsPanning(false);
+  }, []);
 
   const togglePin = useCallback((eventId: string) => {
     togglePinEvent(eventId);
@@ -727,8 +786,9 @@ export default function EventNetworkMap() {
         hubCount: gEvts.length,
       });
 
-      const maxS = Math.min(gEvts.length, 8);
-      const eR = Math.min(W, H) * 0.12 + maxS * 2;
+      const isExpanded = expandedHubs.has(gv);
+      const maxS = isExpanded ? Math.min(gEvts.length, 30) : Math.min(gEvts.length, 8);
+      const eR = Math.min(W, H) * (isExpanded ? 0.20 : 0.12) + maxS * 2;
       gEvts.slice(0, maxS).forEach((ev: Event, ei: number) => {
         const ea = (ei / Math.max(maxS, 1)) * Math.PI * 2 - Math.PI / 2;
         const eid = `event:${ev.id}`;
@@ -779,7 +839,7 @@ export default function EventNetworkMap() {
     }
 
     return { nodes, edges };
-  }, [size, viewMode, groupBy, selectedEvent, contextData, events, pinnedIds]);
+  }, [size, viewMode, groupBy, selectedEvent, contextData, events, pinnedIds, expandedHubs]);
 
   // ===================================================================
   // FORCE SIMULATION + LABEL COLLISION RESOLUTION
@@ -809,11 +869,9 @@ export default function EventNetworkMap() {
   // ===================================================================
   // ELASTIC SPRING ANIMATION
   // ===================================================================
-  const animPositions = useRef<Map<string, { x: number; y: number; vx: number; vy: number }>>(new Map());
   const animFrameRef = useRef<number>(0);
   const targetNodesRef = useRef(simulatedNodes);
   targetNodesRef.current = simulatedNodes;
-  const [, triggerRender] = useState(0);
 
   useEffect(() => {
     const targets = simulatedNodes;
@@ -851,8 +909,17 @@ export default function EventNetworkMap() {
       tgt.forEach((node: GraphNode) => {
         const s = state.get(node.id);
         if (!s) return;
-        const dx = node.x - s.x;
-        const dy = node.y - s.y;
+
+        // Skip nodes being actively dragged – position set directly by handler
+        if (dragStartRef.current?.nodeId === node.id) return;
+
+        // Use drag override position as target if user has repositioned this node
+        const override = dragOverrides.current.get(node.id);
+        const tx = override ? override.x : node.x;
+        const ty = override ? override.y : node.y;
+
+        const dx = tx - s.x;
+        const dy = ty - s.y;
         s.vx = (s.vx + dx * STIFFNESS) * FRICTION;
         s.vy = (s.vy + dy * STIFFNESS) * FRICTION;
         s.x += s.vx;
@@ -866,7 +933,11 @@ export default function EventNetworkMap() {
       if (settled) {
         tgt.forEach((node: GraphNode) => {
           const s = state.get(node.id);
-          if (s) { s.x = node.x; s.y = node.y; s.vx = 0; s.vy = 0; }
+          if (!s) return;
+          const override = dragOverrides.current.get(node.id);
+          s.x = override ? override.x : node.x;
+          s.y = override ? override.y : node.y;
+          s.vx = 0; s.vy = 0;
         });
       }
 
@@ -944,7 +1015,7 @@ export default function EventNetworkMap() {
             ? selectedEvent.title.slice(0, 55)
             : viewMode === 'compare'
               ? 'Shared attributes highlighted · Ctrl+click to pin/unpin'
-              : `${events.length} events · Scroll to zoom · Drag to pan · Ctrl+click to pin`}
+              : `${events.length} events · Scroll to zoom · Drag canvas to pan · Drag nodes to move`}
         </p>
 
         {/* Group-by buttons (overview) */}
@@ -1064,7 +1135,7 @@ export default function EventNetworkMap() {
         width={size.width}
         height={size.height}
         className="w-full h-full"
-        style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
+        style={{ cursor: dragStartRef.current ? 'grabbing' : isPanning ? 'grabbing' : 'grab' }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -1107,12 +1178,15 @@ export default function EventNetworkMap() {
             const isPinned = !!node.event && pinnedIds.has(node.event.id);
             const isHovered = hoveredNodeId === node.id;
             const dimmed = connectedNodeIds ? !connectedNodeIds.has(node.id) : false;
+            const isExpanded = isHub && expandedHubs.has(node.label);
+            const isDragging = dragStartRef.current?.nodeId === node.id;
 
             return (
               <g
                 key={node.id}
-                onMouseEnter={() => setHoveredNodeId(node.id)}
+                onMouseEnter={() => { if (!dragStartRef.current) setHoveredNodeId(node.id); }}
                 onMouseLeave={() => setHoveredNodeId(null)}
+                onMouseDown={(e) => handleNodeDragStart(e, node.id, node.x, node.y)}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (didPan.current) return;
@@ -1122,14 +1196,26 @@ export default function EventNetworkMap() {
                     } else {
                       setSelectedEvent(node.event);
                     }
-                  } else if (isHub && viewMode === 'overview' && groupBy === 'category') {
-                    useDashboardStore.getState().setFilterCategory(node.label.toLowerCase());
+                  } else if (isHub && viewMode === 'overview') {
+                    // Toggle expand/collapse for any subgroup
+                    setExpandedHubs(prev => {
+                      const next = new Set(prev);
+                      if (next.has(node.label)) next.delete(node.label);
+                      else next.add(node.label);
+                      return next;
+                    });
                   }
                 }}
                 className="cursor-pointer"
+                style={{ cursor: isDragging ? 'grabbing' : 'pointer' }}
               >
                 {/* Hub glow */}
-                {isHub && <circle cx={node.x} cy={node.y} r={node.size + 8} fill={node.color} opacity={isHovered ? 0.15 : 0.06} />}
+                {isHub && <circle cx={node.x} cy={node.y} r={node.size + (isExpanded ? 12 : 8)} fill={node.color} opacity={isExpanded ? 0.22 : isHovered ? 0.15 : 0.06} />}
+
+                {/* Expanded ring indicator */}
+                {isExpanded && (
+                  <circle cx={node.x} cy={node.y} r={node.size + 6} fill="none" stroke={node.color} strokeWidth={1.5} strokeDasharray="3 2" opacity={0.6} />
+                )}
 
                 {/* Pin ring */}
                 {isPinned && (
@@ -1234,9 +1320,11 @@ export default function EventNetworkMap() {
           <div className="text-gray-600 mt-1.5 text-[10px] border-t border-gray-700 pt-1">
             {hoveredNode.event
               ? (pinnedIds.has(hoveredNode.event.id)
-                  ? 'Click to focus · Ctrl+click to unpin'
-                  : 'Click to focus · Ctrl+click to pin')
-              : isHub(hoveredNode) ? 'Click to filter' : ''}
+                  ? 'Click to focus · Ctrl+click to unpin · Drag to move'
+                  : 'Click to focus · Ctrl+click to pin · Drag to move')
+              : isHub(hoveredNode)
+                ? (expandedHubs.has(hoveredNode.label) ? 'Click to collapse · Drag to move' : 'Click to expand · Drag to move')
+                : 'Drag to move'}
           </div>
         </div>
       )}
